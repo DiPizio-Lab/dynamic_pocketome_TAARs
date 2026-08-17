@@ -1,0 +1,42 @@
+# Data -- published separately, never committed here.
+/input/*
+!/input/.gitkeep
+/output/*
+!/output/.gitkeep
+
+# Common local data/result dir names, in case a run script is pointed at the
+# repo root directly instead of input//output/.
+apo_structures/
+holo_structures/
+meta_analysis/
+meta_analysis_old/
+analysis_results/
+global_ID_apo_only/
+global_ID_holo_only/
+global_ID_both_states/
+apo_holo_global_id_mapping/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Generated binaries / renders -- regenerate via the pipeline, don't commit.
+*.blend
+*.blend1
+*.MNSession
+*.png
+*.pse
+*.pdb
+
+# IDE / tool config
+.idea/
+.claude/
+.vscode/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Logs
+*.log
+nohup.out

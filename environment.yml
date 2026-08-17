@@ -1,0 +1,30 @@
+name: taar-pocketome
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - pandas
+  - numpy
+  - scipy
+  - scikit-learn
+  - networkx
+  - matplotlib
+  - seaborn
+  - plotly
+  - upsetplot
+  - biopython
+  - biopandas
+  - mdanalysis
+  - requests
+  - ipywidgets
+  - jupyter
+  - pip
+  - pip:
+      - kaleido        # static PNG/PDF export for plotly figures
+      - rcsbapi         # RCSB PDB API client used by scripts/pdb_api.py
+
+# Not installable via conda/pip -- install separately, see README.md:
+#   - PyMOL            https://pymol.org/                 (open the .pml scripts written by global_id/pymol_ambiguous_pockets.py)
+#   - Blender + Molecular Nodes  https://molecularnodes.org/  (renders the pocket figures, see global_id/blender_global_id_prep.py)
+#   - atclus            external GitHub repo, cited in README.md (pocket clustering tool used by scripts/pocket_analysis.py)

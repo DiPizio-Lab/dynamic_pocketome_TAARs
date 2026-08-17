@@ -1,0 +1,7 @@
+short_gene_names = {'8ITF': 'mTAAR9', '8IW4': 'mTAAR9', '8IW7': 'mTAAR9', '8IWM': 'mTAAR9',
+                        '8JLJ': 'mTAAR1', '8JLK': 'mTAAR1', '8JLN': 'hTAAR1', '8JLO': 'hTAAR1',
+                        '8JLP': 'hTAAR1', '8JLQ': 'hTAAR1', '8JLR': 'hTAAR1', '8JSO': 'hTAAR1',
+                        '8PM2': 'mTAAR7f', '8W87': 'hTAAR1', '8W88': 'hTAAR1', '8W89': 'hTAAR1',
+                        '8W8A': 'hTAAR1', '8WC3': 'mTAAR1', '8WC4': 'mTAAR1', '8WC5': 'mTAAR1',
+                        '8WC6': 'mTAAR1', '8WC7': 'mTAAR1', '8WC8': 'hTAAR1', '8WC9': 'mTAAR1',
+                        '8WCB': 'mTAAR1', '8WCC': 'mTAAR1'}
