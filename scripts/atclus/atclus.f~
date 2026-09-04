@@ -1,0 +1,636 @@
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      program atclus
+      include 'atclus.inc'
+c
+      write(*,'(a)') '--> Program atclus started'
+      logfil=.false.
+      call get_command_argument(1,chaarg(1))
+      if(chaarg(1).eq.' ') logfil=.true.
+      if(chaarg(2).eq.' ') then
+         chaarg(2)='1.500'
+         write(*,900) 'Radcon not supplied, set default: ',chaarg(2)
+      end if
+      if(.not.logfil) then
+         call get_command_argument(2,chaarg(2))
+         chafil=' '
+         call textae(chaarg(1),ianarg,ienarg,lcharg)
+         chafil(ianarg:ienarg)=chaarg(1)
+         write(*,900) 'base filename chafil: ',chafil
+         write(*,900) 'conn.  radius charad: ',chaarg(2)
+         read(chaarg(2),915) radcon
+         write(*,910) 'conn.  radius radcon: ',radcon
+         call textae(chafil,ianfil,ienfil,lchfil)
+         write(*,920) 'base filname  length: ',lchfil
+      end if
+c      
+      call reapdb
+      call detele
+      call elechk
+      call ploele
+      call clustr
+      call wrigrp
+      call wriatm
+c
+      write(*,'(a)') '--> Program atclus completed'
+c
+      return
+ 900  format(a22,a)
+ 910  format(a22,f12.5)
+ 915  format(f12.5)
+ 920  format(a22,i2)
+ 930  format(a34,a)
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine reapdb
+      include 'atclus.inc'
+c
+      write(*,'(a)') '--> Module reapdb started'
+      if(logfil) then
+         ifunit=31
+         open (ifunit,file='atclus.inp')
+ 20      read(ifunit,900,end=810) chalin(1:80)
+         call qctolo(chalin)
+         if(index(chalin(31:80),'connectivity-radius').gt.0) then
+            read(chalin(1:30),930) radcon
+         end if
+         if(index(chalin(31:80),'input-filename').gt.0) then
+            chaout=' '
+            read(chalin(1:30),900) chaout
+            call textae(chaout,ianarg,ienarg,lchfil)
+            read(chaout(ianarg:ienarg),900) chafil(1:lchfil)
+         end if
+         goto 20
+ 810     close(ifunit)
+      end if
+c
+      write(*,950) 'base file name (w/o ext)read: ',chafil
+      write(*,940) '    connectivity radius read: ',radcon
+c
+      ifunit=31
+      chalin(1:80)=' '
+      chafil(lchfil+1:lchfil+4)='.pdb'
+      open (ifunit,file=chafil(1:lchfil+4))
+      numatm=0
+ 10   read(ifunit,900,end=800) chalin(1:80)
+      call qctolo(chalin)
+      numatm=numatm+1
+      if(numatm.gt.maxatm) stop 'enlarge maxatm'
+      if(index(chalin(1:80),'atom').gt.0) then
+         read(chalin(32:38),920) xyzatm(1,numatm)
+         read(chalin(40:46),920) xyzatm(2,numatm)
+         read(chalin(48:54),920) xyzatm(3,numatm)
+      end if
+      goto 10
+ 800  close(ifunit)
+      write(*,900) 'File test.pdb read and OK'
+      write(*,910) 'number of atoms read: ',numatm
+c
+      write(*,'(a)') '--> Module reapdb completed'
+c      
+      return
+ 900  format (a)
+ 910  format (a30,i6)
+ 920  format(f7.0)
+ 930  format(f30.0)
+ 940  format(a,f12.5)
+ 950  format(a,a)
+      end 
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      SUBROUTINE QCTOLO (CH)
+C     Wandelt alle im String CH stehenden GROSSBUCHSTABEN in         um
+C                                                             kleine 
+C
+C     ****************
+C     * STANDARD F77 *
+C     ****************
+C
+C
+C VARIABLE TYP ART DIMENSION      ERKLAERUNG
+C ----------------------------------------------------------------------
+C CH        C  I/O  *(*)          Textstring
+C
+C
+      CHARACTER*(*) CH
+      CHARACTER*26 GBU,KBU
+      INTEGER LCH, ICH, IPOS, QCLEN
+C
+      DATA GBU/'ABCDEFGHIJKLMNOPQRSTUVWXYZ'/
+      DATA KBU/'abcdefghijklmnopqrstuvwxyz'/
+C
+c     LCH=QCLEN(CH)
+      call textae(ch,ianf,iend,lch)
+C
+      IF (LCH.EQ.0) R E T U R N
+      DO 10 ICH=ianf,iend
+         IPOS=INDEX(GBU,CH(ICH:ICH))
+         IF (IPOS.NE.0) CH(ICH:ICH)=KBU(IPOS:IPOS)
+   10 CONTINUE
+      R E T U R N
+      END
+c---->---1---------2---------3---------4---------5---------6---------7--<
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine textae(zeil,ianf,iend,lang)
+c
+c---bestimmt  laenge  <lang> {Output}
+c             anfang  <ianf> {Output}
+c               ende  <iend> {Output}  
+c des charactersrings <zeil> {Input/Output}
+c   
+c
+      character*(*) zeil
+c
+      do 10 jend=len(zeil),1,-1
+         if(zeil(jend:jend).ne.' ') goto 20
+   10 continue
+      ianf=1
+      iend=1
+      lang=0
+      return
+   20 do 30 janf=1,len(zeil)
+         if(zeil(janf:janf).ne.' ') goto 40
+   30 continue
+   40 iend=jend
+      ianf=janf
+      lang=iend-ianf+1
+c
+      return
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine detele
+      include 'atclus.inc'
+c      
+      write(*,'(a)') '--> Module detele started'
+
+c     
+c---two nodes within radcon get connected by an element      
+      dismin= bignum
+      dismax=-bignum
+      dsmiel= bignum
+      dsmael=-bignum
+      numele=0
+      do i=1,numatm
+         do j=i+1,numatm
+            disnum=distan(xyzatm(1,i),xyzatm(1,j))
+            dismin=min(disnum,dismin)
+            dismax=max(disnum,dismax)
+            if(disnum.lt.radcon) then
+               numele=numele+1
+               if(numele.gt.maxatm) then
+                  stop 'enlarge maxatm'
+               end if
+c
+c---first node always has the lower number               
+               knoele(1,numele)=i
+               knoele(2,numele)=j
+               dsmiel=min(disnum,dsmiel)
+               dsmael=max(disnum,dsmael)
+            end if
+         end do
+      end do
+c
+      write(*,900) 'Number of elements created: ',numele
+      write(*,910) '  Maximum distance in mesh: ',dismax
+      write(*,910) '  Minimum distance in mesh: ',dismin
+      write(*,910) '  Maximum distance in elem: ',dsmael
+      write(*,910) '  Minimum distance in elem: ',dsmiel
+c
+      write(*,'(a)') '--> Module detele completed'
+      return
+ 900  format(a,i6)
+ 910  format(a,f12.5)
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      function distan(xyzno1,xyzno2)
+      implicit double precision (a-h,o-z)
+      parameter (z0=0.d0)
+      dimension xyzno1(3),xyzno2(3)
+c      
+      distan=z0
+      xd=xyzno1(1)-xyzno2(1)
+      yd=xyzno1(2)-xyzno2(2)
+      zd=xyzno1(3)-xyzno2(3)
+      distan=sqrt(xd*xd+yd*yd+zd*zd)
+c      
+      return
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine elechk
+      include 'atclus.inc'
+c      
+      write(*,'(a)') '--> Module elechk started'
+c
+c---ibndat(i) gives number of nodes attached (by elements) to node i
+      do i=1,numatm
+         ibndat(i)=0
+      end do
+c      
+      do iel=1,numele
+         k1=knoele(1,iel)
+         k2=knoele(2,iel)
+         ibndat(k1)=ibndat(k1)+1
+         ibndat(k2)=ibndat(k2)+1
+      end do
+c
+      ibndnu=0
+      interi=0
+      inonco=0
+      neimax=0
+      do i=1,numatm
+         if(ibndat(i).lt.1) then
+            inonco=inonco+1
+            write(*,900) 'unconnected atom ',i
+            dismin=bignum
+            do j=1,numatm
+               if(i.ne.j) then
+                  dif=distan(xyzatm(1,i),xyzatm(1,j))
+                  if(dif.lt.dismin) then
+                     jsav=j
+                     dismin=dif
+                  end if
+               end if
+            end do
+            write(*,910) 'Minimum distance: ',i,j,dismin   
+         else if(ibndat(i).lt.2) then
+            ibndnu=ibndnu+1
+         else
+            interi=interi+1
+         end if
+         neimax=max(neimax,ibndat(i))
+      end do
+c
+      write(*,900) 'Number of interior atoms: ',interi
+      write(*,900) 'Number of boundary atoms: ',ibndnu
+      write(*,900) 'Number of unconnec atoms: ',inonco
+      write(*,900) 'Maximum number neighbors: ',neimax
+c
+      write(*,'(a)') '--> Module elechk completed'
+c     
+      return
+ 900  format(a,:,i6)
+ 910  format(a,i6,1x,i6,1x,e12.5)
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine ploele
+      include 'atclus.inc'
+c
+      write(*,'(a)') '--> Module ploele started'
+c     
+      ifunit=31
+      chafil(lchfil+1:lchfil+4)='.gnu'
+      open (ifunit,file=chafil(1:lchfil+4))
+      do iel=1,numele
+         kn1=knoele(1,iel)
+         kn2=knoele(2,iel)
+         write(ifunit,900) (xyzatm(k,kn1),k=1,3)
+         write(ifunit,900) (xyzatm(k,kn2),k=1,3)
+         write(ifunit,900)
+         write(ifunit,900)
+      end do
+      close(ifunit)
+c
+      ifunit=31
+      chafil(lchfil+1:lchfil+4)='.nod'
+      open (ifunit,file=chafil(1:lchfil+4))
+      do i=1,numatm
+         write(ifunit,900) (xyzatm(k,i),k=1,3),radcon,i
+      end do
+      close(ifunit)
+c
+       write(*,'(a)') '--> Module ploele completed'           
+c      
+      return
+ 900  format(4(f12.5,:,1x),i6)
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine clustr
+      include 'atclus.inc'
+c
+      write(*,'(a)') '--> Module clustr started'
+c
+c---initially each atom forms a group by itself      
+c---  initial number of groups = number of atoms (nodes)
+      write(*,'(a)') 'Initializing groups'
+      do i=1,numatm
+         igroup(i)=i
+      end do
+c
+c---convergence must be achieved within highest number of neighboring nodes iterations
+      write(*,'(a)') 'Cooking groups down by iteration'
+      do j=1,neimax+neimax
+         numcha=0
+c
+c---only connected nodes can fall into the same group (therefore search by elements)     
+         do iel=1,numele
+            kno1=knoele(1,iel)
+            kno2=knoele(2,iel)
+            igr1=igroup(kno1)
+            igr2=igroup(kno2)
+            if (igr1.ne.igr2) then
+               migr=min(igr1,igr2)
+               numcha=numcha+1
+c
+c---assign smaller group number to connected nodes iteratively
+               igroup(kno1)=migr
+               igroup(kno2)=migr
+            end if
+         end do
+         write(*,910) '    Number of changes: ',numcha
+         if(numcha.lt.1) then
+            write(*,920) 'Converged after step/max: ',j,neimax+1
+            goto 50
+         end if
+      end do
+      write(*,920) 'Warning: not converged after step/max: ',j,neimax+1
+c
+ 50   do i=1,numatm
+         isrgrp(i)=igroup(i)
+      end do
+c$$$  call iasort(isrgrp,numatm)
+      write(*,'(a)') 'Sorting groups by ascending group name'
+c
+c---sort by ascending group name 
+      call busort(igroup,isrgrp,1,numatm)
+c
+      ifunit=32
+      chafil(lchfil+1:lchfil+4)='.chk'
+      open (ifunit,file=chafil(1:lchfil+4))
+c$$$      open(ifunit,file='test.chk')
+      write(ifunit,890) '# i igroup(i) isrgrp(i) igroup(isrgrp(i))'
+      do i=1,numatm
+         write(ifunit,950) i,igroup(i),isrgrp(i),igroup(isrgrp(i))
+      end do
+      close(ifunit)
+c
+c---determine number of groups      
+      write(*,'(a)') 'Evaluating number of groups'
+      numgrp=1
+      numsta=1
+      numchk=1
+      igrold=igroup(isrgrp(1))
+      namgrp(numgrp)=numgrp
+      namold(1)=igrold
+      do i=2,numatm+1
+         if(i.lt.numatm+1) then
+            igrnew=igroup(isrgrp(i))
+         else
+            igrnew=-1
+         end if
+         if(igrnew.ne.igrold) then
+            number=i-numsta
+            if(numchk.ne.number) then
+               write(*,930) 'Warning in group: ',numgrp,number,numchk
+            else
+               write(*,930) 'Confirmed in group: ',numgrp,number,numchk
+            end if
+            nuprgr(numgrp)=number
+            namgrp(numgrp)=numgrp
+            namold(numgrp)=igrold
+            numsta=i
+            numgrp=numgrp+1
+            if(numgrp.gt.maxgrp) stop 'numgrp > maxgrp'
+            igrold=igrnew
+            numchk=1
+         else
+            namold(numgrp)=igrold
+            numchk=numchk+1
+         end if
+      end do
+      numgrp=numgrp-1
+      write(*,910) 'Number of groups: ',numgrp
+c
+      do i=1,numatm
+         igrnam=igroup(i)
+         do k=1,numgrp
+            if(igrnam.eq.namold(k)) igroup(i)=namgrp(k)
+         end do
+      end do
+c
+c      
+c      ngroup=1
+c      namold=igroup(isrgrp(1))
+c      igroup(isrgrp(1))=ngroup
+c      do i=2,numatm
+c         namnew=igroup(isrgrp(i))
+c         if(namnew.eq.namold) then
+c            igroup(isrgrp(i))=ngroup
+c         else
+c            ngroup=ngroup+1
+c            igroup(isrgrp(i))=ngroup
+c            namold=namnew
+c         end if
+c      end do
+c      write(*,910) 'Number of groups renamed: ',ngroup
+c
+      number=0
+      do igr=1,numgrp
+         write(*,920) 'Name and number of members in group: ',
+     &                igr,namold(igr),namgrp(igr),nuprgr(igr)
+         number=number+nuprgr(igr)
+      end do
+      write(*,920) 'Members in groups/overall: ',number,numatm
+c
+      ifunit=31
+      chafil(lchfil+1:lchfil+4)='.grp'
+      open (ifunit,file=chafil(1:lchfil+4))
+c$$$      open(31,file='test.grp')
+      write(ifunit,890) '# i igroup(i) isrgrp(i) igroup(isrgrp(i))'
+      do i=1,numatm
+         write(ifunit,950) i,igroup(i),isrgrp(i),igroup(isrgrp(i))
+      end do
+      close(ifunit)
+c
+      write(*,'(a)') '--> Module ploele completed'
+c      
+      return
+ 890  format(a)
+ 900  format(5(i6,:,1x))
+ 910  format(a,i6)
+ 920  format(a,6(i6,:,1x))
+ 930  format(a,i6,1x,i6,1x,i6)
+ 950  format(6(i6,1x,:))
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+c@======================================================================
+c Bubble-Sort Algorithmus. Das Feld <ipoin> ist ein Pointer-Feld, ueber
+c das auf die Elemente des zu sortierenden Feldes <feld> zugegriffen
+c wird. Somit koennen auch Teilbereiche eines Feldes sortiert werden.
+c
+c Eingabeparameter      Beschreibung
+c  ifeld(*)               Zahlenwerte, nach denen sortiert wird
+c  ipoin(*)              Pointerfeld, sortiert wird feld(ipoin(n1..n2))
+c  n1                    Erster Index im Pointerfeld
+c  n2                    Letzter Index im Pointerfeld
+c
+c Ausgabeparameter      Beschreibung
+c  ipoin(*)              siehe oben
+c=======================================================================
+      subroutine busort(ifeld,ipoin,n1,n2)
+      implicit double precision (a-h,o-z)
+      dimension ifeld(*),ipoin(*)
+      logical lwechs
+
+c.....Vorwaerts oder rueckwaerts sortieren ?
+
+      if (n1.le.n2) then
+         istep=1
+      else
+         istep=-1
+      endif
+
+c.....Sortier-Loop
+
+ 100  continue
+      lwechs=.false.
+      do 200 i=n1+istep,n2,istep
+         if (ifeld(ipoin(i-1)).gt.ifeld(ipoin(i))) then
+            ihilf=ipoin(i)
+            ipoin(i)=ipoin(i-1)
+            ipoin(i-1)=ihilf
+            lwechs=.true.
+         endif
+ 200  continue
+      if (lwechs) goto 100
+      return
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine iasort(ia,n)
+      dimension ia(n)
+      inc=1
+    1 continue
+      inc=3*inc+1
+      if(inc.le.n) goto 1
+    2 continue
+      inc=inc/3
+      do i=inc+1,n
+         k=ia(i)
+         j=i
+    3    continue
+         if(ia(j-inc).gt.k)then
+            ia(j)=ia(j-inc)
+            j=j-inc
+            if(j.le.inc) goto 4
+            goto 3
+         end if
+    4    continue
+         ia(j)=k
+      end do
+      if(inc.gt.1) goto 2
+      return
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine wrigrp
+      include 'atclus.inc'
+c
+      write(*,'(a)') '--> Module wrigrp started'
+c      
+c      chafil(lchfil+1:lchfil+4)='.nod'
+c      open (ifunit,file=chafil(1:lchfil+4))
+      nodcou=0
+      chaout=' '
+      write(chaout(1:lchfil),'(a)') chafil(1:lchfil)
+      write(chaout(lchfil+1:lchfil+11),'(a)') '-out-00.pdb'
+      chalin=' '
+      write(chalin(1:lchfil),'(a)') chafil(1:lchfil)
+      write(chalin(lchfil+1:lchfil+3),'(a)') '.00' 
+c
+      open(33,file='show')
+      write(33,970) chafil(1:lchfil)
+c      
+      do ngroup=1,numgrp
+         do k=1,3
+            xyzcog(k,ngroup)=z0
+         end do
+         if(ngroup.lt.10) then
+            write(chaout(lchfil+6:lchfil+6),'(i1)') 0
+            write(chaout(lchfil+7:lchfil+7),'(i1)') ngroup
+            write(chalin(lchfil+2:lchfil+2),'(i1)') 0
+            write(chalin(lchfil+3:lchfil+3),'(i1)') ngroup
+         else if(ngroup.lt.100) then
+            write(chaout(lchfil+6:lchfil+7),'(i2)') ngroup
+            write(chalin(lchfil+2:lchfil+3),'(i2)') ngroup
+         else
+            stop 'number of groups > 99'
+         end if
+         open(31,file=chaout)
+         open(32,file=chalin)
+         if (ngroup.lt.numgrp) then
+            write(33,980) chalin(1:lchfil+3)
+         else
+            write(33,990) chalin(1:lchfil+3)
+         end if
+         numwri=0
+         do j=1,numatm
+            if(igroup(j).eq.namgrp(ngroup)) then
+               write(31,910) (xyzatm(k,j),k=1,3),z0,z0
+               write(32,940) (xyzatm(k,j),k=1,3)
+               write(32,940)
+               do k=1,3
+                  xyzcog(k,ngroup)=xyzcog(k,ngroup)+xyzatm(k,j)
+               end do
+               numwri=numwri+1
+            end if
+         end do
+         close(31)
+         close(32)
+         write(*,930) 'Written group: ',ngroup,' #members: ',numwri
+         do k=1,3
+            xyzcog(k,ngroup)=xyzcog(k,ngroup)/dble(numwri)
+         end do
+         nodcou=nodcou+numwri
+      end do
+      write(*,920) 'Node count in wrigrp vs. numatm: ',nodcou,numatm
+c
+      
+      chalin=' '
+      write(chalin(1:lchfil),'(a)') chafil(1:lchfil)
+      write(chalin(lchfil+1:lchfil+6),'(a)') '.group'
+      chaout=' '
+      write(chaout(1:lchfil),'(a)') chafil(1:lchfil)
+      write(chaout(lchfil+1:lchfil+4),'(a)') '.lab'
+      open(31,file=chalin)
+      open(32,file=chaout)
+      do i=1,numgrp
+         write( *,950) i,namgrp(i),nuprgr(i),(xyzcog(k,i),k=1,3)
+         write(31,950) i,namgrp(i),nuprgr(i),(xyzcog(k,i),k=1,3)
+         write(32,960) i,namgrp(i),(xyzcog(k,i),k=1,3)
+      end do
+      close(31)
+      close(32)
+c
+      
+      write(*,'(a)') '--> Module wrigrp completed'
+c
+      return
+ 890  format(a)
+ 900  format(a,i6)
+ 910  format('ATOM      1  C   PTH     1     ',5(f7.3,1x,:))
+ 920  format(a,i6,1x,i6)
+ 930  format(10(a,i6,:))
+ 940  format(6(f12.5,:,1x))
+ 950  format('Group: ',i6,' name: ',i6,' #: ',i6,' COG: ',3(f12.5,1x,:))
+ 960  format('set label ',i6,' "',i6,'" at ',3(f12.5,1x,:,','),'center')
+ 970  format('splot "',a,'.gnu" w p pt 6 ps 3,\')
+ 980  format('"',a,'" w p pt 6 ps 3,\')
+ 990  format('"',a,'" w p pt 6 ps 3')
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<
+      subroutine wriatm
+      include 'atclus.inc'
+c
+      write(*,'(a)') '--> Module wriatm started'
+c      
+      ifunit=31
+      chafil(lchfil+1:lchfil+4)='.atm'
+      open (ifunit,file=chafil(1:lchfil+4))
+c$$$      open(31,file='test.atm')
+      do i=1,numatm
+         write(31,900) i, igroup(i),(xyzatm(k,i),k=1,3)
+      end do
+      close (31)
+c
+      write(*,'(a)') '--> Module wriatm completed'
+c      
+      return
+ 900  format(i6,1x,i6,1x,3(f12.5,1x,:))
+      end
+c---->---1---------2---------3---------4---------5---------6---------7--<

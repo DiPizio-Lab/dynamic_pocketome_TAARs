@@ -2820,7 +2820,7 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     Parameters:
     -----------
     pocket_comparison_df : pandas.DataFrame
-        Pocket comparison table with 'Local Pocket ID' and 'is_orthosteric' (or 'is_binding_site') columns
+        Pocket comparison table with 'Local Pocket ID' and 'is_orthosteric' columns
     summary_df : pandas.DataFrame, optional
         Full summary with volume data. If None, loads from summary_csv_path
     saving_loc : str
@@ -2844,17 +2844,11 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     # Get orthosteric/binding site Local Pocket IDs
     print("\nIdentifying orthosteric pockets...")
 
-    # Check for column name (support both 'is_orthosteric' and 'is_binding_site')
-    if 'is_orthosteric' in pocket_comparison_df.columns:
-        ortho_col = 'is_orthosteric'
-    elif 'is_binding_site' in pocket_comparison_df.columns:
-        ortho_col = 'is_binding_site'
-    else:
-        print("ERROR: No orthosteric column found. Expected 'is_orthosteric' or 'is_binding_site'")
+    ortho_col = 'is_orthosteric'
+    if ortho_col not in pocket_comparison_df.columns:
+        print(f"ERROR: No '{ortho_col}' column found.")
         print(f"Available columns: {list(pocket_comparison_df.columns)}")
         return None
-
-    print(f"  Using column: '{ortho_col}'")
 
     # Check for ID column (support both 'Local Pocket ID' and 'ID')
     if 'Local Pocket ID' in pocket_comparison_df.columns:

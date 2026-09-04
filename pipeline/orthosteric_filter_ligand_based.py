@@ -1,30 +1,40 @@
 """
-Orthosteric binding site filter for pocket analysis.
-Adds a boolean column 'is_orthosteric' to pocket data based on proximity to ligand coordinates.
-Since we have holo structures, the coordinates of the ligand in holo is used to filter for the pocket(s) that are within
-a distance parameter range (5Angström) of the centroid of the ligand. This centroid is also used for the apo states.
+Orthosteric ("binding site") pocket classification -- single source of truth for
+the underlying is_binding_site/is_orthosteric label used everywhere in the
+pipeline (Step 2 and Step 3). Computed once here as `is_binding_site`
+(pocket_comparison_table.csv, Step 2a and Step 3); Step 2b merges it in and
+renames it to `is_orthosteric` for pocket_analysis_summary.csv and everything
+downstream of that file (run_apo_holo_comparison.py, taar_paper_figures/) --
+see the README for why the name differs between the two.
 
+Definition: per holo PDB, the residues within RESIDUE_DISTANCE_THRESHOLD (5 A) of
+the co-crystallized ligand's centroid define that PDB's orthosteric site. Apo
+structures reuse their holo counterpart's site (both states are superposed into
+one coordinate frame and share residue numbering, and apo has no ligand of its
+own). A pocket is classified as binding-site (orthosteric) if at least
+MIN_RESIDUE_OVERLAP (80%) of its own residues fall inside that site.
 """
 
 import os
 import sys
+import re
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Dict, Optional, List
-import re
+from typing import Dict, Optional, List, Set
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
 from config import HOLO_BASE_DIR
 
 DEFAULT_HOLO_BASE = HOLO_BASE_DIR
-DEFAULT_DISTANCE_THRESHOLD = 5.0  # Å - pocket centroid must be within this distance of ligand centroid
 DEFAULT_LIGAND_RESNAMES = ['LIG']
+RESIDUE_DISTANCE_THRESHOLD = 5.0   # Angstrom, residue-to-ligand-centroid cutoff
+MIN_RESIDUE_OVERLAP = 0.8          # fraction of a pocket's own residues that must fall in the site
 
 
-def extract_ligand_coords(pdb_path: str, resnames: List[str] = ['LIG']) -> Optional[np.ndarray]:
+def extract_ligand_coords(pdb_path: str, resnames: List[str] = DEFAULT_LIGAND_RESNAMES) -> Optional[np.ndarray]:
     """
-    Extract heavy atom coordinates for ligand from PDB file.
+    Extract heavy atom coordinates for the ligand from a PDB file.
     Returns array of shape (n_atoms, 3) or None if not found.
     """
     coords = []
@@ -38,7 +48,6 @@ def extract_ligand_coords(pdb_path: str, resnames: List[str] = ['LIG']) -> Optio
             if resname not in resnames:
                 continue
 
-            # Skip hydrogens
             atom_name = line[12:16].strip()
             if atom_name.startswith('H') or atom_name.startswith('D'):
                 continue
@@ -54,162 +63,144 @@ def extract_ligand_coords(pdb_path: str, resnames: List[str] = ['LIG']) -> Optio
     return np.array(coords) if coords else None
 
 
-def load_all_ligands(holo_base: str, resnames: List[str] = ['LIG']) -> Dict[str, np.ndarray]:
+def _protein_residue_atom_coords(pdb_path: str) -> Dict[str, List[np.ndarray]]:
+    """residue_id (str) -> list of that residue's heavy-atom coordinates (ATOM records only,
+    i.e. protein -- ligand/water/ions are HETATM and excluded)."""
+    residues: Dict[str, List[np.ndarray]] = {}
+
+    with open(pdb_path, 'r') as f:
+        for line in f:
+            if not line.startswith('ATOM'):
+                continue
+
+            atom_name = line[12:16].strip()
+            if atom_name.startswith('H') or atom_name.startswith('D'):
+                continue
+
+            resid = line[22:26].strip()
+            try:
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+            except ValueError:
+                continue
+
+            residues.setdefault(resid, []).append(np.array([x, y, z]))
+
+    return residues
+
+
+def orthosteric_site_residues(holo_base: str = DEFAULT_HOLO_BASE,
+                              ligand_resnames: List[str] = DEFAULT_LIGAND_RESNAMES,
+                              distance_threshold: float = RESIDUE_DISTANCE_THRESHOLD) -> Dict[str, Set[str]]:
     """
-    Load ligand coordinates for all available PDB IDs.
-    Returns dict mapping PDB ID -> ligand centroid (x, y, z).
+    Per bare PDB ID (no apo/holo prefix, e.g. '8ITF'): the set of residue IDs within
+    distance_threshold Angstrom of the ligand centroid, computed from that PDB's holo
+    structure (the lowest-numbered replicate under holo_base/holo<PDBID>/<rep>/structure.pdb --
+    the ligand pose at frame 0 is effectively the same across replicates of the same
+    crystal structure).
     """
     holo_path = Path(holo_base)
-    ligands = {}
+    site_residues: Dict[str, Set[str]] = {}
 
     if not holo_path.exists():
         print(f"WARNING: Holo base directory not found: {holo_base}")
-        return ligands
+        return site_residues
 
     for pdb_dir in holo_path.iterdir():
         if not pdb_dir.is_dir():
             continue
 
-        pdb_file = pdb_dir / "NEUTRAL_fis.pdb"
-        if not pdb_file.exists():
+        rep_dirs = sorted((d for d in pdb_dir.iterdir() if d.is_dir()), key=lambda d: d.name)
+        pdb_file = next((d / "structure.pdb" for d in rep_dirs if (d / "structure.pdb").exists()), None)
+        if pdb_file is None:
             continue
 
-        coords = extract_ligand_coords(str(pdb_file), resnames)
-        if coords is not None and len(coords) > 0:
-            ligands[pdb_dir.name] = coords.mean(axis=0)  # Store centroid
+        ligand_coords = extract_ligand_coords(str(pdb_file), ligand_resnames)
+        if ligand_coords is None or len(ligand_coords) == 0:
+            continue
+        centroid = ligand_coords.mean(axis=0)
 
-    return ligands
+        near: Set[str] = set()
+        for resid, atom_coords in _protein_residue_atom_coords(str(pdb_file)).items():
+            distances = np.linalg.norm(np.array(atom_coords) - centroid, axis=1)
+            if distances.min() <= distance_threshold:
+                near.add(resid)
+
+        bare_id = re.sub(r'^(apo|holo)', '', pdb_dir.name)
+        site_residues[bare_id] = near
+
+    return site_residues
 
 
-def parse_pocket_id(pocket_id: str) -> Optional[Dict]:
+def normalize_pocket_number(series: pd.Series) -> pd.Series:
+    """Pocket numbers come out of the mdpocket filename parser as strings that may be
+    zero-padded ('02') or embedded in an ID suffix ('_p24'); strip to the bare int so
+    pocket tables merge reliably on (prj, rep, pocket_number)."""
+    return series.astype(str).str.extract(r'(\d+)')[0].astype(int)
+
+
+def classify_binding_site(pockets_df: pd.DataFrame, holo_base: str = DEFAULT_HOLO_BASE,
+                          distance_threshold: float = RESIDUE_DISTANCE_THRESHOLD,
+                          min_overlap: float = MIN_RESIDUE_OVERLAP,
+                          saving_loc: Optional[str] = None,
+                          filename: str = 'pocket_labels_ortho_def.csv') -> pd.DataFrame:
     """
-    Parse pocket ID like 'apo8ITF_1_p24_i3' into components.
-
-    Returns dict with: state, pdb_id, replicate, pocket_num
-    """
-    pattern = r'^(apo|holo)([A-Z0-9]+)_(\d+)_p(\d+)_i\d+$'
-    match = re.match(pattern, pocket_id)
-
-    if not match:
-        return None
-
-    return {'state': match.group(1),
-        'pdb_id': match.group(2),
-        'replicate': int(match.group(3)),
-        'pocket_num': int(match.group(4))}
-
-
-def add_orthosteric_column(
-        df: pd.DataFrame,
-        holo_base: str = DEFAULT_HOLO_BASE,
-        distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD,
-        ligand_resnames: List[str] = DEFAULT_LIGAND_RESNAMES,
-        id_column: str = 'ID',
-        coord_columns: List[str] = ['x', 'y', 'z'],
-        verbose: bool = True) -> pd.DataFrame:
-    """
-    Add 'is_orthosteric' boolean column to pocket dataframe.
-    A pocket is marked as orthosteric if its centroid is within
-    distance_threshold of the ligand centroid.
+    Classify every pocket in pockets_df as binding-site (orthosteric) or not.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        Pocket data with ID column and coordinate columns
+    pockets_df : pd.DataFrame
+        One row per residue per pocket, as produced by
+        MetaAnalysis.pock_file_parser()['res_to_pock_df']. Needs 'prj', 'rep',
+        'pocket_number', 'residue_id' and, if present, 'residue_name' columns.
     holo_base : str
-        Path to directory containing {PDBID}/NEUTRAL_fis.pdb files
+        Path to the raw holo input tree (PDB+rep layout), used to derive each PDB's
+        orthosteric site (see orthosteric_site_residues).
     distance_threshold : float
-        Maximum distance (Å) from pocket centroid to ligand centroid
-    ligand_resnames : list
-        Residue names to identify ligand in PDB files
-    id_column : str
-        Column name containing pocket IDs (e.g., 'apo8ITF_1_p24_i3')
-    coord_columns : list
-        Column names for x, y, z coordinates
-    verbose : bool
-        Print progress information
+        Residue-to-ligand-centroid cutoff (Angstrom) that defines a PDB's site.
+    min_overlap : float
+        Minimum fraction of a pocket's own residues that must fall in its PDB's
+        site for the pocket to be classified as binding-site.
+    saving_loc : str, optional
+        If given, also writes the result to {saving_loc}/{filename} (Stage 3's
+        fallback source for is_binding_site when it's missing from
+        pocket_comparison_table.csv).
 
     Returns
     -------
     pd.DataFrame
-        Input dataframe with added 'is_orthosteric' column
+        One row per (pocket_number, prj, rep): 'pocket_number', 'prj', 'rep',
+        'isovalue', 'total_residues', 'residues', 'overlap_ratio', 'is_binding_site'.
     """
-    df = df.copy()
+    site_residues = orthosteric_site_residues(holo_base, distance_threshold=distance_threshold)
 
-    if verbose:
-        print("Loading ligand coordinates...")
-    ligands = load_all_ligands(holo_base, ligand_resnames)
-
-    if verbose:
-        print(f"  Found ligands for {len(ligands)} PDB IDs: {sorted(ligands.keys())}")
-
-    if not ligands:
-        print("WARNING: No ligands found. Adding is_orthosteric=False for all rows.")
-        df['is_orthosteric'] = False
-        return df
-
-    # Calculate pocket centroids per unique ID
-    if verbose:
-        print("Calculating pocket centroids...")
-
-    pocket_centroids = df.groupby(id_column)[coord_columns].mean()
-
-    # Determine orthosteric status for each pocket ID
-    if verbose:
-        print("Classifying pockets...")
-
-    orthosteric_ids = set()
-    stats = {'orthosteric': 0, 'non_orthosteric': 0, 'no_ligand': 0, 'parse_error': 0}
-
-    for pocket_id in pocket_centroids.index:
-        parsed = parse_pocket_id(pocket_id)
-
-        if parsed is None:
-            stats['parse_error'] += 1
-            continue
-
-        pdb_id = parsed['pdb_id']
-
-        if pdb_id not in ligands:
-            stats['no_ligand'] += 1
-            continue
-
-        # Get pocket centroid and ligand centroid
-        pocket_centroid = pocket_centroids.loc[pocket_id, coord_columns].values
-        ligand_centroid = ligands[pdb_id]
-
-        # Calculate distance
-        distance = np.linalg.norm(pocket_centroid - ligand_centroid)
-
-        if distance <= distance_threshold:
-            orthosteric_ids.add(pocket_id)
-            stats['orthosteric'] += 1
+    rows = []
+    for (pock_no, prj, rep), df_pocket in pockets_df.groupby(['pocket_number', 'prj', 'rep']):
+        df_pocket = df_pocket.reset_index(drop=True)
+        res_ids = df_pocket['residue_id'].astype(str).tolist()
+        if 'residue_name' in df_pocket.columns:
+            unique_pairs = (df_pocket[['residue_name', 'residue_id']]
+                            .drop_duplicates().sort_values('residue_id'))
+            aa_list = [f"{row.residue_name}{int(row.residue_id)}" for _, row in unique_pairs.iterrows()]
         else:
-            stats['non_orthosteric'] += 1
+            aa_list = sorted(set(res_ids), key=lambda x: int(x))
 
-    # Add column to dataframe
-    df['is_orthosteric'] = df[id_column].isin(orthosteric_ids)
+        bare_id = re.sub(r'^(apo|holo)', '', str(prj))
+        site = site_residues.get(bare_id, set())
 
-    if verbose:
-        print(f"\nResults:")
-        print(f"  Orthosteric pockets:     {stats['orthosteric']}")
-        print(f"  Non-orthosteric pockets: {stats['non_orthosteric']}")
-        print(f"  No ligand available:     {stats['no_ligand']}")
-        print(f"  Parse errors:            {stats['parse_error']}")
-        print(f"  Total rows marked True:  {df['is_orthosteric'].sum()}")
+        pocket_residues = set(res_ids)
+        overlap_ratio = len(pocket_residues & site) / len(pocket_residues) if pocket_residues else 0.0
+        is_binding = overlap_ratio >= min_overlap
 
-    return df
+        isovalue = df_pocket['isovalue'].iloc[0] if 'isovalue' in df_pocket.columns else None
+        rows.append({'pocket_number': pock_no, 'prj': prj, 'rep': rep, 'isovalue': isovalue,
+                     'total_residues': len(pocket_residues), 'residues': aa_list,
+                     'overlap_ratio': round(overlap_ratio, 2), 'is_binding_site': is_binding})
 
+    result_df = pd.DataFrame(rows)
 
-def filter_orthosteric(
-        df: pd.DataFrame,
-        holo_base: str = DEFAULT_HOLO_BASE,
-        distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD,
-        **kwargs) -> pd.DataFrame:
-    """
-    Convenience function: add column and filter to orthosteric pockets only.
-    Returns only rows where is_orthosteric=True.
-    """
-    df = add_orthosteric_column(df, holo_base, distance_threshold, **kwargs)
-    return df[df['is_orthosteric']].copy()
+    if saving_loc is not None:
+        result_df.to_csv(os.path.join(saving_loc, filename), index=False)
 
+    return result_df

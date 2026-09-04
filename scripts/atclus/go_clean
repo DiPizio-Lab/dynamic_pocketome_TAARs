@@ -1,0 +1,9 @@
+rm test.0*
+rm test.1*
+rm test.atm
+rm test.chk
+rm test.gnu
+rm test.grp
+rm test.nod
+rm test-out-0*.pdb
+rm test-out-1*.pdb

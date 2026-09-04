@@ -3,11 +3,14 @@ which contains methods usually used as first steps of analyses, such as making a
 (e.g., to dry the protein) or aligning to reference structure.
 If you want to add basic functionalities this is the right script."""
 import os
+import sys
 import time
 import warnings
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
-from scripts import config as conf
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+import config as conf
 from scripts import logging as log
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -32,7 +35,7 @@ class PreProcess:
         e.g., stride = 10 means that every tenth frame is considered"""
         # dry_prot.write(os.path.join(saving_path, 'dry_prot.dcd'), frames='all')# just wont work (saves only 1st frame)
         log.log(f'\n Preprocessing: Make Selection and Save \n Data: {self.curr_proj}_{self.curr_rep} \n')
-        saving_path = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep)
+        saving_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep)
         univ = mda.Universe(self.topology, self.trajectory)
 
         last_frame = len(univ.trajectory)
@@ -81,7 +84,8 @@ class PreProcess:
         # Use either the attributes topology & trajectory or the User Inout, e.g., the universe of the dry protein
         t0 = time.time()
         log.log(f'\n Preprocessing: Alignment to Reference \n Data: {self.curr_proj}_{self.curr_rep} \n')
-        saving_path = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep)
+        aligned_top, filename_dcd = conf.aligned_paths_for(self.curr_proj, self.curr_rep, 'dcd')
+        _, filename_xtc = conf.aligned_paths_for(self.curr_proj, self.curr_rep, 'xtc')
         if universe is None:
             univ = mda.Universe(self.topology, self.trajectory)
         else:
@@ -91,15 +95,13 @@ class PreProcess:
         ref_univ = mda.Universe(reference)
         ref_univ_prot = mda.Merge(ref_univ.select_atoms(selection))
         # for some fucking reasons ypu have to select the atoms of a Universe first to be able to save it
-        ref_univ_prot.atoms.write(os.path.join(saving_path, 'aligned_top.pdb'))
-        filename_dcd = os.path.join(saving_path, 'aligned_traj.dcd')
-        filename_xtc = os.path.join(saving_path, 'aligned_traj.xtc')
+        ref_univ_prot.atoms.write(aligned_top)
         if not os.path.exists(filename_dcd) and not os.path.exists(filename_xtc):
             if self.trajectory.endswith('.dcd'):
                 if self.verbose:
-                    print(f'INFO: Aligning universe built with {universe[1].split(conf.folder_results)[1]} '
+                    print(f'INFO: Aligning universe built with {universe[1].split(conf.results_dir_for(self.curr_proj))[1]} '
                           f'(with {len(univ.trajectory)} frames) to reference {reference}')
-                log.log(f'INFO: Aligning universe built with {universe[1].split(conf.folder_results)[1]} '
+                log.log(f'INFO: Aligning universe built with {universe[1].split(conf.results_dir_for(self.curr_proj))[1]} '
                         f'(with {len(univ.trajectory)} frames) to reference {reference}')
                 align.AlignTraj(univ, ref_univ_prot,
                                 select='protein and name CA',
@@ -111,9 +113,9 @@ class PreProcess:
                 t1 = time.time()
             elif self.trajectory.endswith('.xtc'):
                 if self.verbose:
-                    print(f'INFO: Aligning universe built with {universe[1].split(conf.folder_results)[1]} '
+                    print(f'INFO: Aligning universe built with {universe[1].split(conf.results_dir_for(self.curr_proj))[1]} '
                           f'(with {len(univ.trajectory)} frames) to reference {reference}')
-                log.log(f'INFO: Aligning universe built with {universe[1].split(conf.folder_results)[1]} '
+                log.log(f'INFO: Aligning universe built with {universe[1].split(conf.results_dir_for(self.curr_proj))[1]} '
                         f'(with {len(univ.trajectory)} frames) to reference {reference}')
                 align.AlignTraj(univ, ref_univ_prot,
                                 select='protein and name CA',

@@ -1,0 +1,8 @@
+splot "test.gnu",\
+"test.01" w p pt 6 ps 3,\
+"test.02" w p pt 6 ps 3,\
+"test.03" w p pt 6 ps 3,\
+"test.04" w p pt 6 ps 3,\
+"test.05" w p pt 6 ps 3,\
+"test.06" w p pt 6 ps 3,\
+"test.07" w p pt 6 ps 3

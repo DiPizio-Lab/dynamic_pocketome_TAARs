@@ -1,0 +1,666 @@
+"""
+Step 2.2: assigns Global IDs on a chosen subset of Step 2.1's pockets, and compares apo vs holo.
+
+Merge of the Global-ID parts of the old comparative_study.py + meta_analysis_class.py, the
+global_id/ wrapper scripts (global_id_wrapper_paper.py, gid_state_mapping.py), and
+run_apo_holo_comparison.py.
+
+A pocket's Global ID is only meaningful within the run that produced it -- two pockets can
+only share a Global ID if they were voxel-clustered together, so Global IDs from two different
+subsets are NOT comparable (see match_states() below for the one case where you deliberately
+want to reconcile two separate runs). This script therefore always clusters ONE chosen subset
+of pockets -- by state (apo/holo/both-together), gene, and/or PDB ID -- selected in-memory from
+pocket_dataframes.py's all_pockets output, instead of re-parsing the raw pocket files per
+subset the way global_id_wrapper_paper.py used to.
+
+Reads all_pockets, pocket_summary (pipeline/pocket_io.py, either .csv or .parquet --
+pocket_dataframes.py's output), from config.META_ANALYSIS_DIR by default.
+
+Writes, under saving_loc, as both .csv and .parquet:
+    pocket_comparison_table   one row per Local Pocket ID in the subset: Global ID, gene/state/
+                              PDB uniqueness annotations, and the is_orthosteric / transient /
+                              volume_category columns inherited from Step 2.1
+    apo_holo_pocketome_summary.csv   per-PDB-ID apo/holo comparison (if requested)
+plus diagnostic/QC output: global_pockets_IoU_voxel.csv, local_to_globalVoxelID.txt,
+pocket_clusters_qc.html, per-PDB within_pdb_global_id_plot.html, upset/bar-chart gene-overlap
+plots, unique_to_gene/unique_to_structure/shared_in_all_gene comparison csvs.
+"""
+import gc
+import itertools
+import os
+import sys
+from collections import Counter
+from itertools import combinations
+
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import upsetplot
+from scipy.ndimage import distance_transform_edt
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'taar_paper_figures'))
+import config as conf
+from scripts import logging as logger
+import pocket_io
+import taar_style as ts               # noqa: E402  (path bootstrap above must run first)
+import pocketome_metrics as pm        # noqa: E402
+import fig2_binding_site as fig2      # noqa: E402
+
+pd.set_option('display.max_columns', None)
+
+VOXEL_SIZE = 1.0          # A per voxel
+IOU_THRESH = 0.3          # require >= this IoU to link two pockets into the same global one
+DILATION_RADIUS = 5       # pad each pocket by this many voxels to absorb small shifts
+MIN_CLUSTER_SIZE = 2      # connected components smaller than this are singleton/noise (group 0)
+# defaults tuned against hTAAR1, mTAAR1, mTAAR7f and mTAAR9 overlap -- see voxel_intersection_over_union_global_id
+
+
+# ----------------------------------------------------------------------- subset selection
+def select_subset(all_pockets, states=None, genes=None, pdb_ids=None):
+    """Filters Step 2.1's all_pockets (or pocket_summary) down to the pockets that should be
+    clustered together in one Global ID run. states/genes/pdb_ids are optional lists;
+    None/empty means "no filter on this axis"."""
+    df = all_pockets
+    if states:
+        df = df[df['state'].isin(states)]
+    if genes:
+        df = df[df['gene'].isin(genes)]
+    if pdb_ids:
+        df = df[df['pdb_id'].isin(pdb_ids)]
+    return df.copy()
+
+
+# ----------------------------------------------------------------------- voxel-IoU clustering
+def pocket_point_dataframe(df):
+    """One row per unique (Pocket ID, x, y, z) alpha-sphere position -- the deduplicated point
+    cloud that defines each pocket's spatial extent, independent of how many frames it was
+    seen in (all_pockets repeats every point once per frame). This is the only input
+    voxel_intersection_over_union_global_id needs.
+
+    Replaces the old pock_file_parser -> _data_prep_for_clustering -> pad-to-wide -> melt-back-
+    to-long round trip (meta_analysis_class.py's _pocket_feature_dataframe/_to_padded_tuples/
+    _melt_coordinates), which existed only to also feed the HDBSCAN centroid-clustering path
+    that nothing calls (that path is dropped here, see voxel_intersection_over_union_global_id)."""
+    flat = df[['ID', 'x', 'y', 'z', 'prj', 'rep']].drop_duplicates(subset=['ID', 'x', 'y', 'z']).copy()
+    flat = flat.rename(columns={'ID': 'Pocket ID'})
+    return flat
+
+
+def _dilate_voxels(voxel_set, radius):
+    """Dilates a set of integer voxel coordinates by radius (Euclidean distance transform)."""
+    pts = np.array(list(voxel_set))
+    mins = pts.min(axis=0) - radius
+    maxs = pts.max(axis=0) + radius
+    shape = (maxs - mins + 1).astype(int)
+    mask = np.zeros(shape, dtype=bool)
+    for v in voxel_set:
+        mask[tuple((v - mins).astype(int))] = True
+    dilated = distance_transform_edt(~mask) <= radius
+    return {tuple(coord + mins) for coord in np.argwhere(dilated)}
+
+
+def plot_pocket_clusters_qc(df, saving_loc, cluster_col='voxel_group_id'):
+    """QC 3D scatter of pocket points, colored by cluster_col. df needs ['Pocket ID','x','y','z',
+    cluster_col]; PDB ID and hover text are derived from Pocket ID."""
+    df = df.copy()
+    df['PDB ID'] = df['Pocket ID'].str.extract(r'^((?:apo|holo)[A-Za-z0-9]+)_\d', expand=False)
+    df['hover_text'] = "ID: " + df['Pocket ID'] + "<br>Group: " + df[cluster_col].astype(str)
+
+    fig1 = go.Figure()
+    for pdb_id in df['PDB ID'].unique():
+        subset = df[df['PDB ID'] == pdb_id]
+        fig1.add_trace(go.Scatter3d(
+            x=subset['x'], y=subset['y'], z=subset['z'], mode='markers',
+            marker=dict(size=4, color=subset[cluster_col], colorscale='Viridis',
+                       colorbar=dict(title=cluster_col), opacity=0.8),
+            name=pdb_id, text=subset['hover_text'], hoverinfo='text'))
+    fig1.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+                       title=f'3D Pocket Clustering by {cluster_col}', template='simple_white',
+                       margin=dict(l=0, r=0, b=0, t=40), legend=dict(x=1, y=1))
+    fig1.write_html(os.path.join(saving_loc, 'pocket_clusters_qc.html'))
+
+    unique_clusters = sorted(df[cluster_col].dropna().unique(), key=lambda x: int(x))
+    color_sequence = px.colors.qualitative.Dark24
+    color_map = {c: color_sequence[i % len(color_sequence)] for i, c in enumerate(unique_clusters)}
+    data_traces = []
+    for cluster in unique_clusters:
+        subset = df[df[cluster_col] == cluster]
+        for pdb in subset['PDB ID'].unique():
+            sub = subset[subset['PDB ID'] == pdb]
+            data_traces.append(go.Scatter3d(
+                x=sub['x'], y=sub['y'], z=sub['z'], mode='markers', name=f'Grp {cluster} - {pdb}',
+                text=sub['hover_text'], hoverinfo='text',
+                marker=dict(size=4, color=color_map[cluster]), legendgroup=str(cluster), showlegend=True))
+    fig2_ = go.Figure(data=data_traces)
+    fig2_.update_layout(title=f'3D Pocket Clustering by {cluster_col}',
+                        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+                        template='simple_white', legend=dict(x=1.02, y=1))
+    fig2_.write_html(os.path.join(saving_loc, f'detailed_pocket_clusters_{cluster_col}_qc.html'))
+
+
+def voxel_intersection_over_union_global_id(saving_loc, summary_df=None, point_df=None,
+                                            voxel_size=VOXEL_SIZE, iou_thresh=IOU_THRESH,
+                                            dilation_radius=DILATION_RADIUS,
+                                            min_cluster_size=MIN_CLUSTER_SIZE, make_qc_plot=True):
+    """
+    Global ID clustering. Concept: voxelize every pocket's point cloud at voxel_size resolution
+    (optionally dilated to absorb small shifts between replicates), compute pairwise
+    Intersection-over-Union, build a graph (nodes = local pockets, edge = IoU >= iou_thresh),
+    and take connected components as Global IDs. Components smaller than min_cluster_size are
+    reassigned to their nearest labelled neighbour (1-NN on centroid) rather than left as noise.
+
+    Pass either summary_df (all_pockets or a subset of it -- pocket_point_dataframe() is run
+    for you) or an already-reshaped point_df (pocket_point_dataframe() output), e.g. to avoid
+    redoing the reshape when clustering the same pockets more than once.
+
+    Returns the point-level dataframe with an added 'voxel_group_id' column (== Global ID).
+    Also writes global_pockets_IoU_voxel.csv, local_to_globalVoxelID.txt,
+    reduced_local_to_globalVoxelID.csv, and (if make_qc_plot) the QC scatter plots.
+    """
+    if point_df is None:
+        if summary_df is None:
+            raise ValueError('Pass either summary_df or point_df')
+        point_df = pocket_point_dataframe(summary_df)
+    df = point_df.copy()
+
+    pocket_voxels, pocket_bounds = {}, {}
+    for pid, grp in df.groupby('Pocket ID'):
+        ijk = np.floor(grp[['x', 'y', 'z']].values / voxel_size).astype(int)
+        vox = set(map(tuple, ijk))
+        if dilation_radius > 0:
+            vox = _dilate_voxels(vox, dilation_radius)
+        pocket_voxels[pid] = vox
+        mins, maxs = ijk.min(axis=0), ijk.max(axis=0)
+        pocket_bounds[pid] = (mins[0], maxs[0], mins[1], maxs[1], mins[2], maxs[2])
+
+    graph = nx.Graph()
+    graph.add_nodes_from(pocket_voxels)
+    for p1, p2 in combinations(pocket_voxels, 2):
+        x1min, x1max, y1min, y1max, z1min, z1max = pocket_bounds[p1]
+        x2min, x2max, y2min, y2max, z2min, z2max = pocket_bounds[p2]
+        if (x1max < x2min or x2max < x1min or y1max < y2min or y2max < y1min
+                or z1max < z2min or z2max < z1min):
+            continue  # bounding boxes don't even overlap
+        inter = pocket_voxels[p1] & pocket_voxels[p2]
+        if not inter:
+            continue
+        iou = len(inter) / len(pocket_voxels[p1] | pocket_voxels[p2])
+        if iou >= iou_thresh:
+            graph.add_edge(p1, p2)
+
+    mapping, group_id = {}, 1
+    for comp in nx.connected_components(graph):
+        if len(comp) >= min_cluster_size:
+            for pid in comp:
+                mapping[pid] = group_id
+            group_id += 1
+        else:
+            for pid in comp:
+                mapping[pid] = 0  # noise/singleton, reassigned below
+
+    centroids = df.groupby('Pocket ID')[['x', 'y', 'z']].mean().rename(
+        columns={'x': 'cx', 'y': 'cy', 'z': 'cz'})
+    centroids['group'] = centroids.index.map(mapping)
+    labeled_mask, noise_mask = centroids['group'] > 0, centroids['group'] == 0
+    if noise_mask.any() and labeled_mask.any():
+        from sklearn.neighbors import KNeighborsClassifier
+        knn = KNeighborsClassifier(n_neighbors=1)
+        knn.fit(centroids.loc[labeled_mask, ['cx', 'cy', 'cz']].values, centroids.loc[labeled_mask, 'group'].values)
+        centroids.loc[noise_mask, 'group'] = knn.predict(centroids.loc[noise_mask, ['cx', 'cy', 'cz']].values)
+        for pid, group in centroids['group'].items():
+            mapping[pid] = int(group)
+
+    df['voxel_group_id'] = df['Pocket ID'].map(mapping)
+    if make_qc_plot:
+        plot_pocket_clusters_qc(df, saving_loc, cluster_col='voxel_group_id')
+    pocket_io.save_table(df, saving_loc, 'global_pockets_IoU_voxel', formats=('csv',))
+
+    df['Pocket ID local'] = df['Pocket ID'].str.replace(r'_i[\d.]+$', '', regex=True)
+    df['Pocket ID global'] = df['voxel_group_id']
+    reduced_df = df[['Pocket ID local', 'Pocket ID global']].drop_duplicates()
+    reduced_df.to_csv(os.path.join(saving_loc, 'reduced_local_to_globalVoxelID.csv'), index=False)
+
+    voxel_to_pockets = df.groupby('voxel_group_id')['Pocket ID local'].apply(set).to_dict()
+    with open(os.path.join(saving_loc, 'local_to_globalVoxelID.txt'), 'w') as f:
+        for voxel_id, pockets in voxel_to_pockets.items():
+            f.write(f"{voxel_id}: {sorted(pockets)}\n")
+
+    return df
+
+
+# ----------------------------------------------------------------------- gene/uniqueness bookkeeping
+def make_pocket_summary(df, local_id_col='Local ID', global_id_col='Global ID',
+                        volume_col='interpolated_pock_volume',
+                        keep_first_cols=('prj', 'rep', 'gene', 'state', 'pdb_id',
+                                         'is_orthosteric', 'is_largest_pocket', 'transient',
+                                         'volume_category')):
+    """Collapses the (already Global-ID-tagged) subset into one row per Local Pocket ID."""
+    cols_needed = [local_id_col, global_id_col, volume_col] + list(keep_first_cols)
+    small = df[[c for c in cols_needed if c in df.columns]].drop_duplicates()
+
+    agg_dict = {volume_col: 'median'}
+    for c in keep_first_cols:
+        if c in small.columns:
+            agg_dict[c] = 'first'
+    if global_id_col in small.columns:
+        agg_dict[global_id_col] = 'first'
+
+    grouped = small.groupby(local_id_col, observed=True).agg(agg_dict)
+    grouped = grouped.rename(columns={volume_col: 'median_interpolated_volume', global_id_col: 'Global ID'})
+    return grouped.reset_index().rename(columns={local_id_col: 'Local Pocket ID'})
+
+
+def annotate_uniqueness(df, prj_col='prj', pocket_id_col='Global ID', id_col='ID', gene_col='gene'):
+    """Adds n_replicates_within_prj, unique_in_one_rep, genes_list, n_distinct_genes,
+    unique_to_one_gene -- how widely each Global ID is shared across replicates/genes."""
+    working = df
+    working[id_col] = working[id_col].astype(str)
+
+    rep_counts = (working.loc[working[pocket_id_col].notna() & working['rep'].notna(),
+                              [prj_col, pocket_id_col, 'rep']]
+                 .drop_duplicates().groupby([prj_col, pocket_id_col], observed=True)['rep']
+                 .nunique().rename('n_replicates_within_prj').reset_index())
+    working = working.merge(rep_counts, on=[prj_col, pocket_id_col], how='left')
+    working['n_replicates_within_prj'] = working['n_replicates_within_prj'].fillna(0).astype(int)
+    working['unique_in_one_rep'] = working['n_replicates_within_prj'] == 1
+    del rep_counts
+    gc.collect()
+
+    gene_df = working.loc[working[pocket_id_col].notna() & working[gene_col].notna(),
+                          [pocket_id_col, gene_col]].drop_duplicates()
+    if not gene_df.empty:
+        agg = (gene_df.groupby(pocket_id_col, observed=True)[gene_col]
+              .agg(lambda s: ';'.join(sorted(map(str, pd.unique(s))))).rename('genes_list').reset_index())
+        agg['n_distinct_genes'] = agg['genes_list'].str.count(';').fillna(0).astype(int) + 1
+        agg['unique_to_one_gene'] = agg['n_distinct_genes'] == 1
+    else:
+        agg = pd.DataFrame(columns=[pocket_id_col, 'genes_list', 'n_distinct_genes', 'unique_to_one_gene'])
+
+    working = working.merge(agg, on=pocket_id_col, how='left')
+    working['genes_list'] = working['genes_list'].where(working['genes_list'].notna(), pd.NA)
+    working['n_distinct_genes'] = working['n_distinct_genes'].fillna(0).astype(int)
+    working['unique_to_one_gene'] = working['unique_to_one_gene'].fillna(False).astype(bool)
+    del gene_df, agg
+    gc.collect()
+    return working
+
+
+def within_pdb_plot(df, pdb_id, saving_loc, cluster_col='Global ID'):
+    """Per-PDB 3D scatter of pockets colored by Global ID, one marker shape per replicate."""
+    df = df.copy()
+    df['replicate'] = df['ID'].str.extract(r'_(\d+)_p\d', expand=False)
+    df['hover_text'] = "ID: " + df['ID'] + "<br>Group: " + df[cluster_col].astype(str)
+
+    unique_replicates = sorted(df['replicate'].dropna().unique())
+    markers = ['circle', 'square', 'cross', 'diamond']
+    symbol_map = {r: markers[i % len(markers)] for i, r in enumerate(unique_replicates)}
+    unique_globals = sorted(df[cluster_col].dropna().unique(), key=lambda x: int(x))
+    color_sequence = px.colors.qualitative.Dark24
+    color_map = {gid: color_sequence[i % len(color_sequence)] for i, gid in enumerate(unique_globals)}
+
+    data_traces, visibility_map = [], {rep: [] for rep in unique_replicates}
+    for gid in unique_globals:
+        subset = df[df[cluster_col] == gid]
+        for rep in unique_replicates:
+            sub = subset[subset['replicate'] == rep]
+            visibility_map[rep].append(len(data_traces))
+            data_traces.append(go.Scatter3d(
+                x=sub['x'], y=sub['y'], z=sub['z'], mode='markers',
+                name=f'Global {gid} - Rep {rep} - PDB {pdb_id}', text=sub['hover_text'], hoverinfo='text',
+                marker=dict(size=4, color=color_map[gid], symbol=symbol_map[rep]),
+                legendgroup=str(gid), showlegend=True, visible=True))
+
+    buttons = [dict(label='All Replicates', method='update',
+                    args=[{'visible': [True] * len(data_traces)},
+                          {'title': f'3D Pocket Clustering - All Replicates - PDB {pdb_id}'}])]
+    for rep in unique_replicates:
+        visibility = [False] * len(data_traces)
+        for idx in visibility_map[rep]:
+            visibility[idx] = True
+        buttons.append(dict(label=f'Replicate {rep}', method='update',
+                            args=[{'visible': visibility}, {'title': f'3D Pocket Clustering - Replicate {rep} - PDB {pdb_id}'}]))
+
+    fig = go.Figure(data=data_traces)
+    fig.update_layout(title=f'3D Pocket Clustering by Global ID of {pdb_id}',
+                      scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+                      template='simple_white', legend=dict(x=1.02, y=1),
+                      updatemenus=[dict(buttons=buttons, direction='down', showactive=True,
+                                       x=0.0, xanchor='left', y=1.15, yanchor='top')])
+    fig.write_html(os.path.join(saving_loc, f'{pdb_id}_within_pdb_global_id_plot.html'))
+
+
+def upset_plot_pockets_shared(df, saving_loc):
+    """Which global pockets are unique or shared across genes (upsetplot)."""
+    df = df.copy()
+    df['genes_list'] = df['genes_list'].fillna('').astype(str).str.strip()
+    upset_df = upsetplot.from_memberships(df['genes_list'].str.split(';'), data=df)
+    upsetplot.plot(upset_df, show_counts=True)
+    plt.savefig(os.path.join(saving_loc, 'upsetplot_gene_comparison.png'))
+    plt.close()
+
+
+def barchart_pocket_count(df, saving_loc):
+    """Frequency of every gene-combination a global pocket is shared across."""
+    all_genes = sorted({g for genes in df["genes_list"] for g in genes.split(";")})
+    combos = ["-".join(sorted(c)) for r in range(1, len(all_genes) + 1) for c in itertools.combinations(all_genes, r)]
+    normalized_keys = ["-".join(sorted(set(v.split(";")))) for v in df["genes_list"]]
+    counts = Counter(normalized_keys)
+    combo_counts = {c: counts.get(c, 0) for c in combos}
+    sorted_keys = sorted(combo_counts.keys(), key=lambda k: (k.count("-"), k))
+
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, ax = plt.subplots(figsize=(12, 6))
+    bars = ax.bar(sorted_keys, [combo_counts[k] for k in sorted_keys], color="midnightblue",
+                  edgecolor="black", linewidth=0.6)
+    for bar in bars:
+        h = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.05, f"{int(h)}", ha="center", va="bottom", fontsize=9)
+    ax.set_xlabel("Gene Combinations")
+    ax.set_ylabel("Number of Shared Pockets")
+    ax.set_title("Frequency of Gene Combinations")
+    plt.xticks(rotation=90)
+    plt.tight_layout()
+    plt.savefig(os.path.join(saving_loc, 'bar_chart_pocket_comparison.png'))
+    plt.close()
+
+
+def plot_3d_heatmap(df, saving_loc, out_html='3D_coordinates_frequency_colour_coded.html',
+                    cluster_col='Global ID', genes_of_interest=None, colorscale='Viridis',
+                    marker_size=4, title='3D pockets colored by n_structures (first frame)'):
+    """Interactive 3D scatter of first-frame pocket coordinates, colored by how many distinct
+    PDB structures share each Global ID, with PDB/gene filter dropdowns."""
+    df = df.copy()
+    df['x'] = pd.to_numeric(df['x'], errors='coerce')
+    df['y'] = pd.to_numeric(df['y'], errors='coerce')
+    df['z'] = pd.to_numeric(df['z'], errors='coerce')
+    df[cluster_col] = df[cluster_col].astype(str)
+    df['pdb_id'] = df['ID'].str.extract(r'^((?:apo|holo)[A-Za-z0-9]+)', expand=False)
+    df['state'] = df['pdb_id'].str.extract(r'^(apo|holo)', expand=False)
+
+    pdb_per_global = df.groupby(cluster_col)['pdb_id'].unique().apply(lambda a: ', '.join(sorted(set(a))))
+    gene_per_global = df.groupby(cluster_col)['gene'].unique().apply(
+        lambda a: ', '.join(sorted({str(x) for x in a if pd.notna(x)})))
+    df['pdb_list'] = df[cluster_col].map(pdb_per_global)
+    df['gene_list'] = df[cluster_col].map(gene_per_global)
+    df['hover_text'] = ("ID: " + df['ID'].astype(str) + "<br>Global: " + df[cluster_col].astype(str)
+                        + "<br>in genes: " + df['gene_list'].astype(str)
+                        + "<br>in PDB structures: " + df['pdb_list'].astype(str))
+
+    counts = df.dropna(subset=[cluster_col, 'pdb_id']).groupby(cluster_col)['pdb_id'].nunique().rename('n_structures')
+    df = df.merge(counts, on=cluster_col, how='left')
+    df['n_structures'] = df['n_structures'].fillna(0)
+
+    if genes_of_interest is None:
+        genes_of_interest = ['hTAAR1', 'mTAAR1', 'mTAAR7f', 'mTAAR9']
+    symbol_map = {"apo": "circle", "holo": "square"}
+    unique_pdbs = sorted(df['pdb_id'].dropna().unique())
+    data_traces, pdb_to_idx, gene_to_idx = [], {}, {g: [] for g in genes_of_interest}
+    cmin, cmax = int(df['n_structures'].min()), int(df['n_structures'].max())
+    for idx, pdb in enumerate(unique_pdbs):
+        sub = df[df['pdb_id'] == pdb]
+        if sub.empty:
+            continue
+        data_traces.append(go.Scatter3d(
+            x=sub['x'], y=sub['y'], z=sub['z'], mode='markers', name=f'PDB {pdb}',
+            text=sub['hover_text'], hoverinfo='text',
+            marker=dict(size=marker_size, color=sub['n_structures'], colorscale=colorscale, cmin=cmin, cmax=cmax,
+                       colorbar=dict(title='Structures') if idx == 0 else None,
+                       symbol=[symbol_map.get(s, 'circle') for s in sub['state']])))
+        pdb_to_idx[pdb] = [idx]
+        for g in genes_of_interest:
+            if g in set(sub['gene'].dropna()):
+                gene_to_idx[g].append(idx)
+
+    total = len(data_traces)
+    vis_all = [True] * total
+    pdb_buttons = [dict(label='All PDBs', method='update', args=[{'visible': vis_all}, {'title': f'{title} (All PDBs)'}])]
+    for pdb, idxs in pdb_to_idx.items():
+        vis = [False] * total
+        for i in idxs:
+            vis[i] = True
+        pdb_buttons.append(dict(label=str(pdb), method='update', args=[{'visible': vis}, {'title': f'{title} (PDB {pdb})'}]))
+    gene_buttons = [dict(label='All Genes', method='update', args=[{'visible': vis_all}, {'title': f'{title} (All Genes)'}])]
+    for g, idxs in gene_to_idx.items():
+        vis = [False] * total
+        for i in idxs:
+            vis[i] = True
+        gene_buttons.append(dict(label=g, method='update', args=[{'visible': vis}, {'title': f'{title} (Gene {g})'}]))
+
+    fig = go.Figure(data=data_traces)
+    fig.update_layout(title=title, scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+                      template='simple_white',
+                      updatemenus=[dict(buttons=pdb_buttons, direction='down', showactive=True,
+                                       x=0.0, xanchor='left', y=1.18, yanchor='top', bgcolor='white'),
+                                  dict(buttons=gene_buttons, direction='down', showactive=True,
+                                       x=0.28, xanchor='left', y=1.18, yanchor='top', bgcolor='white')],
+                      legend=dict(x=1.12, y=0.95, bgcolor='rgba(255,255,255,0.9)', bordercolor='black', borderwidth=0.5),
+                      margin=dict(l=60, r=220, t=120, b=60))
+    fig.write_html(os.path.join(saving_loc, out_html))
+    df.to_csv(os.path.join(saving_loc, 'for_plot_3D_coordinates_frequency_colour_coded.csv'), index=False)
+
+
+# ----------------------------------------------------------------------- orchestration
+def assign_global_ids(subset_df, saving_loc, formats=('csv', 'parquet'), make_plots=True, verbose=True):
+    """Runs Global ID clustering on subset_df (already the chosen subset -- see select_subset())
+    and writes pocket_comparison_table (+ uniqueness/overlap csvs and QC/overview plots).
+    Returns pocket_comparison_table as a dataframe."""
+    os.makedirs(saving_loc, exist_ok=True)
+
+    point_df = pocket_point_dataframe(subset_df)
+    voxelized_df = voxel_intersection_over_union_global_id(saving_loc, point_df=point_df,
+                                                            make_qc_plot=make_plots)
+    id_to_global = voxelized_df.drop_duplicates('Pocket ID local').set_index('Pocket ID local')['voxel_group_id']
+
+    subset_df = subset_df.copy()
+    subset_df['Global ID'] = subset_df['Local ID'].map(id_to_global)
+
+    if make_plots:
+        for pdb_id, pdb_df in subset_df.groupby('prj'):
+            try:
+                within_pdb_plot(pdb_df, pdb_id=pdb_id, saving_loc=saving_loc)
+            except Exception as e:
+                print(f"  WARNING: within_pdb_plot failed for {pdb_id}: {e}")
+
+    pocket_summary = make_pocket_summary(subset_df)
+    small_df = subset_df[['prj', 'rep', 'ID', 'Global ID', 'gene']].copy()
+    annotated = annotate_uniqueness(small_df)[['prj', 'rep', 'Global ID', 'gene', 'n_replicates_within_prj',
+                                               'unique_in_one_rep', 'genes_list', 'n_distinct_genes',
+                                               'unique_to_one_gene']]
+    pocket_comparison = pocket_summary.merge(annotated, on=['prj', 'rep', 'Global ID', 'gene'], how='outer')
+    pocket_comparison = pocket_comparison.drop_duplicates(['Local Pocket ID'])
+    pocket_io.save_table(pocket_comparison, saving_loc, 'pocket_comparison_table', formats=formats)
+
+    for name, mask in [('unique_to_gene_comparison', pocket_comparison['unique_to_one_gene'] == True),
+                       ('unique_to_structure_comparison', pocket_comparison['unique_in_one_rep'] == True),
+                       ('shared_in_all_gene_comparison', pocket_comparison['n_distinct_genes']
+                        == pocket_comparison['n_distinct_genes'].max())]:
+        pocket_comparison.loc[mask].to_csv(os.path.join(saving_loc, f'{name}.csv'), index=False)
+
+    if make_plots:
+        first_frame = subset_df.sort_values('snapshot').drop_duplicates('ID')[
+            ['ID', 'Global ID', 'x', 'y', 'z', 'gene']]
+        for fn, args in ((upset_plot_pockets_shared, (pocket_comparison, saving_loc)),
+                         (barchart_pocket_count, (pocket_comparison, saving_loc)),
+                         (plot_3d_heatmap, (first_frame, saving_loc))):
+            try:
+                fn(*args)
+            except Exception as e:
+                print(f"  WARNING: {fn.__name__} failed: {e}")
+
+    message = (f'{subset_df["Local ID"].nunique()} local pockets -> '
+              f'{pocket_comparison["Global ID"].nunique()} global IDs')
+    if verbose:
+        print(message)
+    else:
+        logger.log(message)
+    return pocket_comparison
+
+
+# ----------------------------------------------------------------------- apo vs holo state mapping
+def global_pocket_centroids(pocket_comparison_df):
+    """One row per Global ID: centroid + spread of its member pockets' alpha-sphere clouds is
+    NOT available from pocket_comparison_table alone (that's one row per Local Pocket ID, not
+    per point) -- callers needing point clouds should use global_pockets_IoU_voxel.csv instead;
+    this uses the Local Pocket IDs' own first-frame x,y,z as a lightweight proxy centroid."""
+    grouped = pocket_comparison_df.groupby('Global ID').agg(
+        n_members=('Local Pocket ID', 'size'),
+        median_volume=('median_interpolated_volume', 'median'))
+    if 'is_orthosteric' in pocket_comparison_df.columns:
+        grouped['n_orthosteric_members'] = pocket_comparison_df.groupby('Global ID')['is_orthosteric'].apply(
+            lambda s: int(s.fillna(False).sum()))
+    return grouped.reset_index()
+
+
+def match_states(reference_table, target_table, saving_loc, reference_voxel_csv, target_voxel_csv,
+                 reference_state='apo', target_state='holo', max_match_distance=10.0):
+    """Reconciles two SEPARATELY clustered runs (e.g. apo-only and holo-only) by nearest-
+    centroid matching, run in both directions -- for when you deliberately clustered a state
+    subset alone rather than with --subset combined (which shares numbering already and needs
+    no reconciliation). reference_table/target_table: pocket_comparison_table dataframes;
+    reference_voxel_csv/target_voxel_csv: paths to the matching global_pockets_IoU_voxel.csv
+    (for true point-cloud centroids).
+
+    Method: centroid of every global pocket (mean over all its alpha-sphere points), then
+    Euclidean distance between the two centroid sets. Both directions are computed and merged
+    into one table (direction: 'both' | '<ref>-><tgt>' | '<tgt>-><ref>') so a global pocket
+    with no reciprocal partner is still reported, not silently dropped.
+    """
+    os.makedirs(saving_loc, exist_ok=True)
+
+    def centroids_from_voxels(voxel_csv, comparison_df):
+        voxel_df = pd.read_csv(voxel_csv, usecols=['voxel_group_id', 'x', 'y', 'z'])
+        c = voxel_df.groupby('voxel_group_id')[['x', 'y', 'z']].mean().rename(
+            columns={'x': 'centroid_x', 'y': 'centroid_y', 'z': 'centroid_z'})
+        c.index.name = 'Global ID'
+        return c.join(global_pocket_centroids(comparison_df).set_index('Global ID'), how='left').reset_index()
+
+    ref_c = centroids_from_voxels(reference_voxel_csv, reference_table)
+    tgt_c = centroids_from_voxels(target_voxel_csv, target_table)
+
+    dist = np.linalg.norm(ref_c[['centroid_x', 'centroid_y', 'centroid_z']].values[:, None, :]
+                          - tgt_c[['centroid_x', 'centroid_y', 'centroid_z']].values[None, :, :], axis=2)
+    nearest_for_ref = dist.argmin(axis=1)
+    nearest_for_tgt = dist.argmin(axis=0)
+    pairs = {(i, int(nearest_for_ref[i])) for i in range(len(ref_c))}
+    pairs |= {(int(nearest_for_tgt[j]), j) for j in range(len(tgt_c))}
+
+    rows = []
+    for i, j in sorted(pairs):
+        reciprocal = bool(nearest_for_ref[i] == j and nearest_for_tgt[j] == i)
+        direction = 'both' if reciprocal else (f'{reference_state}->{target_state}'
+                                                if nearest_for_ref[i] == j else f'{target_state}->{reference_state}')
+        rows.append({f'{reference_state}_global_id': int(ref_c.iloc[i]['Global ID']),
+                    f'{target_state}_global_id': int(tgt_c.iloc[j]['Global ID']),
+                    'centroid_distance': float(dist[i, j]), 'reciprocal_nearest': reciprocal,
+                    'matched': bool(dist[i, j] <= max_match_distance), 'direction': direction})
+    mapping_df = pd.DataFrame(rows).sort_values('centroid_distance').reset_index(drop=True)
+    mapping_df.to_csv(os.path.join(saving_loc, 'global_id_state_mapping.csv'), index=False)
+
+    n_reciprocal = int((mapping_df['reciprocal_nearest'] & mapping_df['matched']).sum())
+    print(f"  {reference_state} <-> {target_state}: {len(ref_c)}/{len(tgt_c)} global pockets, "
+          f"{n_reciprocal} reciprocal matches within {max_match_distance:.0f} A")
+    return mapping_df
+
+
+# ----------------------------------------------------------------------- apo vs holo pocketome comparison
+COL_PDB, COL_STATE, COL_REP, COL_CAT, COL_ORTHO = 'pdb_id', 'state', 'rep', 'volume_category', 'is_orthosteric'
+CATEGORY_SLUGS = {'Small (<250)': 'small', 'Medium (250-500)': 'medium', 'Large (500-750)': 'large',
+                  'Very Large (>750)': 'very_large'}
+
+
+def allosteric_pocketome_table(df, pdb_order):
+    """Per PDB: delta_pocket_count, delta_median_volume, JS distance, delta size-class
+    fractions -- all computed by taar_paper_figures/pocketome_metrics.py, unmodified."""
+    allo = df[~df[COL_ORTHO].astype(bool)]
+    dcount = pm.delta_pocket_count(allo, pdb_order, COL_PDB, COL_STATE, COL_REP)
+    dvol = pm.delta_median_volume(allo, pdb_order, pdb_col=COL_PDB, state_col=COL_STATE)
+    js_med, js_lo, js_hi = pm.js_per_structure(allo, pdb_order, pdb_col=COL_PDB, state_col=COL_STATE,
+                                               rep_col=COL_REP, cat_col=COL_CAT)
+    dclass = pm.delta_category_fraction(allo, pdb_order, COL_PDB, COL_STATE, COL_CAT)
+    out = pd.DataFrame({'pdb_id': pdb_order, 'delta_pocket_count': dcount, 'delta_median_volume_pct': dvol,
+                        'js_distance_median': js_med, 'js_distance_min': js_lo, 'js_distance_max': js_hi})
+    for cat, col in zip(pm.CATEGORIES, dclass.T):
+        out[f'delta_fraction_{CATEGORY_SLUGS[cat]}'] = col
+    return out
+
+
+def orthosteric_site_table(pdb_order, source_loc):
+    """Per-PDB median orthosteric-site volume shift, reusing fig2_binding_site's volume_dict/
+    delta_volume -- the same functions that produce figure 2 panel B. source_loc: Step 2.1's
+    saving_loc (default config.META_ANALYSIS_DIR), where orthosteric_perframe_volumes.csv
+    lives -- NOT the Global ID run's saving_loc, since this metric doesn't use Global ID at all
+    (see run_apo_holo_comparison)."""
+    df = pd.read_csv(os.path.join(source_loc, 'orthosteric_perframe_volumes.csv'), usecols=['ID', 'rep', fig2.VOL_COL])
+    parsed = df['ID'].str.extract(fig2.ID_RE)
+    df['state'], df['pdbid'] = parsed[0], parsed[1]
+    df = df.dropna(subset=['state', 'pdbid'])
+    vol = fig2.volume_dict(df)
+    dvol = fig2.delta_volume(vol, pdb_order)
+    return pd.DataFrame({'pdb_id': pdb_order, 'delta_orthosteric_volume_pct': dvol})
+
+
+def run_apo_holo_comparison(pocket_summary_subset, source_loc, saving_loc=None, out=None):
+    """Combines the allosteric pocketome metrics with the orthosteric site volume shift into
+    one per-PDB-ID apo_holo_pocketome_summary.csv. Requires both apo and holo pockets to be
+    present in pocket_summary_subset.
+
+    Neither metric actually uses Global ID (they're per (PDB ID, state, replicate) counts/
+    medians -- see taar_paper_figures/pocketome_metrics.py), so pocket_summary_subset should be
+    Step 2.1's own pocket_summary (optionally filtered through select_subset() to match whatever
+    subset you clustered), NOT assign_global_ids()'s pocket_comparison_table.
+
+    source_loc: Step 2.1's saving_loc, where orthosteric_perframe_volumes.csv lives.
+    saving_loc: where to write apo_holo_pocketome_summary.csv (default: source_loc)."""
+    saving_loc = saving_loc or source_loc
+    gene_map = ts.load_gene_map()
+    pdb_order = ts.order_pdbids(pocket_summary_subset[COL_PDB].unique(), gene_map)
+    allo = allosteric_pocketome_table(pocket_summary_subset, pdb_order)
+    ortho = orthosteric_site_table(pdb_order, source_loc)
+    combined = allo.merge(ortho, on='pdb_id')
+    combined['gene'] = combined['pdb_id'].map(gene_map)
+    out_path = out or os.path.join(saving_loc, 'apo_holo_pocketome_summary.csv')
+    combined.to_csv(out_path, index=False)
+    print(f"  Saved {out_path} ({len(combined)} PDB IDs)")
+    return combined
+
+
+# ----------------------------------------------------------------------- default run
+def main(states=None, genes=None, pdb_ids=None, saving_loc=None, compare_apo_holo=True,
+        formats=('csv', 'parquet'), make_plots=True, verbose=True):
+    """Clusters one subset of all_pockets into Global IDs and, if both states end up in it,
+    compares apo vs holo. states/genes/pdb_ids are the same filters as select_subset() -- the
+    default (all None) is the `combined` subset: every state/gene/PDB clustered together, one
+    shared Global ID numbering, which is what you want unless you have a specific reason not to.
+
+    Call with different arguments for a different subset, e.g. main(states=['apo']) or
+    main(genes=['hTAAR1']) -- from Python or the notebook, not a CLI flag. For apo/holo
+    clustered SEPARATELY and reconciled afterwards, call select_subset() / assign_global_ids()
+    per state and match_states() yourself instead (see the notebook for that recipe).
+    """
+    input_loc = conf.META_ANALYSIS_DIR
+    if saving_loc is None:
+        label = '_'.join(states) if states else 'combined'
+        saving_loc = os.path.join(conf.META_ANALYSIS_ROOT, f'global_ID_{label}')
+
+    all_pockets = pocket_io.load_table(input_loc, 'all_pockets')
+    subset = select_subset(all_pockets, states=states, genes=genes, pdb_ids=pdb_ids)
+    pocket_comparison = assign_global_ids(subset, saving_loc, formats=formats, make_plots=make_plots,
+                                          verbose=verbose)
+
+    if compare_apo_holo:
+        if subset['state'].nunique() < 2:
+            print('compare_apo_holo needs both states in the subset -- skipping (states=' f'{states})')
+        else:
+            pocket_summary = pocket_io.load_table(input_loc, 'pocket_summary')
+            summary_subset = select_subset(pocket_summary, states=states, genes=genes, pdb_ids=pdb_ids)
+            run_apo_holo_comparison(summary_subset, input_loc, saving_loc=saving_loc)
+
+    return pocket_comparison
+
+
+if __name__ == '__main__':
+    main()

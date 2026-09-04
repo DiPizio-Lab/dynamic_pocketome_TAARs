@@ -2,6 +2,7 @@
 import pandas as pd
 from pathlib import Path
 import os
+import sys
 import numpy as np
 import time
 import MDAnalysis as mda
@@ -11,7 +12,9 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import statistics
-from scripts import config as conf
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+import config as conf
 from scripts import logging as log
 
 # Settings
@@ -22,12 +25,13 @@ class BasicAnalysis:
     """should store methods for RMSD, RMSF and pairwise distances of given nested_list, mandatrory method: alignment?
     (alternatively, alignment iun main wrapper / as helper function), """
 
-    def __init__(self, topology=None, trajectory=None, curr_proj='', curr_rep='', verbose=False):
+    def __init__(self, topology=None, trajectory=None, curr_proj='', curr_rep='', verbose=False, show_plots=False):
         self.topology = topology
         self.trajectory = trajectory
         self.curr_proj = curr_proj
         self.curr_rep = curr_rep
         self.verbose = verbose
+        self.show_plots = show_plots
 
     def _line_plot_rmsd(self, df, saving_loc=None):
         """creates line plot using matplotlib for RMSD, RMSF style plots; hidden because called by other methods"""
@@ -37,17 +41,15 @@ class BasicAnalysis:
         fontsize = 15  # float - fontsize x and y label
         pad = 30  # float - pad of title, and (x,y) labels
         if saving_loc is None:
-            saving_path = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep, 'plots')
+            saving_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, 'plots')
         else:
             saving_path = os.path.join(saving_loc, 'plots')
 
         if not os.path.exists(saving_path):
             os.makedirs(saving_path)
-        # TODO implement matplotlib colourmap instead of hard coding blue
         rmsd_cols = [str(col) for col in df.columns if 'RMSD ' in str(col)]
 
         for rmsd in rmsd_cols:
-            plt.clf()
             fig, ax1 = plt.subplots()
             ax1.plot(df['Time in nanoseconds'], df[rmsd], color='darkblue', ls="-", lw=lw, alpha=alpha)
 
@@ -63,11 +65,14 @@ class BasicAnalysis:
                         format='tiff')
             plt.savefig(os.path.join(saving_path, f'{rmsd.replace(' ', '_')}.pdf'), dpi=300,
                         format='pdf')
+            if self.show_plots:
+                plt.show()
+            plt.close(fig)
 
     def _line_plot_rmsf(self, df, saving_loc=None):
         """"""
         if saving_loc is None:
-            saving_path = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep, 'plots')
+            saving_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, 'plots')
         else:
             saving_path = os.path.join(saving_loc, 'plots')
 
@@ -87,6 +92,9 @@ class BasicAnalysis:
                     format='tiff')
         plt.savefig(os.path.join(saving_path, f'RMSF_{self.curr_proj}_rep{self.curr_rep}.pdf'), dpi=300,
                     format='pdf')
+        if self.show_plots:
+            plt.show()
+        plt.close(fig)
 
     def calc_rmsd(self, trj_period_step_stride, topology=None, trajectory=None, selection='protein and name CA',
                   group_selection=None, weights=None, verbose=False, reference=(None, None), saving_ext='',
@@ -129,7 +137,7 @@ class BasicAnalysis:
     """
 
         if saving_loc is None:
-            saving_loc = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep)
+            saving_loc = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep)
 
         log.log(f'\n Calculating RMSD \n Data: {self.curr_proj}_{self.curr_rep} \n')
         if ('traj_period' not in trj_period_step_stride.keys() and
@@ -150,11 +158,8 @@ class BasicAnalysis:
                     'the method will use the previously generated and saved aligned trajectory and its reference '
                     'topology. \n [saved as "aligned_traj<.dcd/.xtc>", "aligned_top.pdb"  and "reference_univ_prot.pdb" '
                     'in the results folder]')
-            if self.trajectory.endswith('.dcd'):
-                trajectory = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep, 'aligned_traj.dcd')
-            elif self.trajectory.endswith('.xtc'):
-                trajectory = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep, 'aligned_traj.xtc')
-            topology = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep, 'aligned_top.pdb')
+            ext = 'dcd' if self.trajectory.endswith('.dcd') else 'xtc'
+            topology, trajectory = conf.aligned_paths_for(self.curr_proj, self.curr_rep, ext)
 
         # Build universe either with aligned_top & traj or with user provided input
         univ = mda.Universe(topology, trajectory)
@@ -221,11 +226,12 @@ class BasicAnalysis:
         t0 = time.time()
         log.log(f'\n Calculating RMSF \n Data: {self.curr_proj}_{self.curr_rep} \n')
         if saving_loc is None:
-            saving_loc = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep)
+            saving_loc = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep)
         else:
             saving_loc = saving_loc
 
-        if topology is None and trajectory is None:
+        using_aligned_default = topology is None and trajectory is None
+        if using_aligned_default:
             if self.verbose:
                 print('\n')
                 print('INFO: you have not specified a topology or trajectory - '
@@ -236,23 +242,16 @@ class BasicAnalysis:
                     'the method will use the previously generated and saved aligned trajectory and its reference '
                     'topology. \n [saved as "aligned_traj<.dcd/.xtc>", "aligned_top.pdb"  and "reference_univ_prot.pdb" '
                     'in the results_dbscan_new folder]')
-            if self.trajectory.endswith('.dcd'):
-                trajectory_aligned = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep,
-                                                  'aligned_traj.dcd')
-            elif self.trajectory.endswith('.xtc'):
-                trajectory_aligned = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep,
-                                                  'aligned_traj.xtc')
-            topology_aligned = os.path.join(conf.folder_results, self.curr_proj, self.curr_rep, 'aligned_top.pdb')
-            univ = mda.Universe(topology_aligned, trajectory_aligned)
-            selection_atgr = univ.select_atoms(selection)
-            rmsf_rec = rms.RMSF(selection_atgr).run()
+            ext = 'dcd' if self.trajectory.endswith('.dcd') else 'xtc'
+            topology, trajectory = conf.aligned_paths_for(self.curr_proj, self.curr_rep, ext)
         else:
             if self.verbose:
                 print(f'INFO: calculating the RMSF for {trajectory} with the selection {selection}')
             log.log(f'INFO: calculating the RMSF for {trajectory} with the selection {selection}')
-            univ = mda.Universe(topology, trajectory)
-            selection_atgr = univ.select_atoms(selection)
-            rmsf_rec = rms.RMSF(selection_atgr).run()
+
+        univ = mda.Universe(topology, trajectory)
+        selection_atgr = univ.select_atoms(selection)
+        rmsf_rec = rms.RMSF(selection_atgr).run()
         resnames = []
         for x in selection_atgr.resnames:
             resnames.append(x)
@@ -262,14 +261,13 @@ class BasicAnalysis:
             df_rmsf['Residue Number Renum'] = df_rmsf['resid_index'] + num_shift_rec
         df_rmsf = df_rmsf.round(3)
 
-        top_filename = Path(topology.split(os.sep)[-1]).stem
-        # retrieves the filename without extension, i.e., splitting '.pdb' or '.mmcif' etc
-
         self._line_plot_rmsf(df=df_rmsf, saving_loc=saving_loc)
-        if trajectory is None and topology is None:
+        if using_aligned_default:
             df_rmsf.to_csv(os.path.join(saving_loc,
                                         f'RMSF_{selection.replace(' ', '_')}_aligned_trj.csv'), index=False)
         else:
+            # retrieves the filename without extension, i.e., splitting '.pdb' or '.mmcif' etc
+            top_filename = Path(topology.split(os.sep)[-1]).stem
             df_rmsf.to_csv(os.path.join(saving_loc,
                                         f'RMSF_{top_filename}_{selection.replace(' ', '_')}.csv'),
                            index=False)

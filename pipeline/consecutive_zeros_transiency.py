@@ -1,9 +1,20 @@
 """
-Calculate maximum consecutive frames at zero volume for each pocket.
+Transiency classification -- single source of truth for the `transient` column
+used everywhere in the pipeline.
 
-This helps differentiate between:
-- True transient pockets (many consecutive frames at 0)
-- Noise/artifacts (scattered 1-3 frames at 0)
+Definition: a pocket is transient if interpolated_pock_volume == 0 for at least
+MIN_ZERO_FRACTION of the simulation's frames in total, AND for at least
+MIN_CONSECUTIVE_ZERO_FRAMES of them consecutively. This tells real transiency
+(long, sustained closures) apart from noise (a handful of scattered zero frames).
+Both conditions are needed: consecutive alone flags anything with one long-enough
+closed stretch regardless of how much of the trajectory that is, and the fraction
+alone flags anything scattered across enough individual frames regardless of
+whether any single closure is meaningful.
+
+At NS_PER_FRAME (1 ns/frame here), MIN_CONSECUTIVE_ZERO_FRAMES=50 is a run of
+>=50 ns; MIN_ZERO_FRACTION=0.10 is >=10% of the simulation, i.e. >=100 frames /
+100 ns for a standard 1000-frame/1000 ns run -- but expressed as a fraction so it
+scales correctly if a trajectory is a different length.
 """
 import sys
 import pandas as pd
@@ -13,6 +24,10 @@ import os
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+
+NS_PER_FRAME = 1.0
+MIN_ZERO_FRACTION = 0.10
+MIN_CONSECUTIVE_ZERO_FRAMES = 50
 
 
 def find_max_consecutive_zeros(volume_series: np.ndarray) -> int:
@@ -45,6 +60,15 @@ def find_max_consecutive_zeros(volume_series: np.ndarray) -> int:
     return int(max_consecutive)
 
 
+def _per_frame_volumes(group: pd.DataFrame, volume_col: str) -> np.ndarray:
+    """One volume value per snapshot, sorted by snapshot. A pocket has multiple rows
+    per frame (one per alpha sphere/dummy atom, all sharing the same volume), so this
+    must dedupe to a single value per frame before counting frames -- otherwise frame
+    counts (and anything compared against an ns-based threshold) are inflated by the
+    number of alpha spheres per frame."""
+    return group.groupby('snapshot')[volume_col].first().sort_index().values
+
+
 def add_max_consecutive_zeros_to_df(all_data_df: pd.DataFrame,
                                     volume_col: str = 'interpolated_pock_volume') -> pd.DataFrame:
     """
@@ -72,11 +96,8 @@ def add_max_consecutive_zeros_to_df(all_data_df: pd.DataFrame,
 
     # Group by pocket ID and find max consecutive zeros
     for pocket_id, group in all_data_df.groupby('ID'):
-        volumes = group[volume_col].sort_values(
-            key=lambda x: group.loc[x.index, 'snapshot']
-        ).values
-        max_consecutive = find_max_consecutive_zeros(volumes)
-        max_zero_dict[pocket_id] = max_consecutive
+        volumes = _per_frame_volumes(group, volume_col)
+        max_zero_dict[pocket_id] = find_max_consecutive_zeros(volumes)
 
     # Add to dataframe
     all_data_df = all_data_df.copy()
@@ -85,19 +106,63 @@ def add_max_consecutive_zeros_to_df(all_data_df: pd.DataFrame,
     return all_data_df
 
 
+def classify_transient(all_data_df: pd.DataFrame, volume_col: str = 'interpolated_pock_volume',
+                       min_zero_fraction: float = MIN_ZERO_FRACTION,
+                       min_consecutive_zero_frames: float = MIN_CONSECUTIVE_ZERO_FRAMES
+                       ) -> Tuple[pd.DataFrame, Dict[str, bool]]:
+    """
+    Classify every pocket (ID) as transient or stable.
+
+    A pocket is transient if volume_col == 0 for at least min_zero_fraction of its
+    frames in total, AND for at least min_consecutive_zero_frames of them
+    consecutively.
+
+    Adds 'n_zero_frames', 'max_consecutive_zero_frames' and 'transient' columns.
+
+    Returns
+    -------
+    (all_data_df, transient_dict) : the input df with the three columns added, and
+    a {ID: bool} dict for the plotting functions in visualizations.py.
+    """
+    n_zero_dict = {}
+    max_consecutive_dict = {}
+    transient_dict = {}
+
+    for pocket_id, group in all_data_df.groupby('ID'):
+        volumes = _per_frame_volumes(group, volume_col)
+        n_zero = int((volumes == 0.0).sum())
+        max_consecutive = find_max_consecutive_zeros(volumes)
+
+        n_zero_dict[pocket_id] = n_zero
+        max_consecutive_dict[pocket_id] = max_consecutive
+        transient_dict[pocket_id] = (n_zero >= min_zero_fraction * len(volumes)
+                                     and max_consecutive >= min_consecutive_zero_frames)
+
+    all_data_df = all_data_df.copy()
+    all_data_df['n_zero_frames'] = all_data_df['ID'].map(n_zero_dict)
+    all_data_df['max_consecutive_zero_frames'] = all_data_df['ID'].map(max_consecutive_dict)
+    all_data_df['transient'] = all_data_df['ID'].map(transient_dict)
+
+    return all_data_df, transient_dict
+
+
 def add_max_consecutive_zeros_chunked(data_path: str,
                                       output_path: str,
                                       volume_col: str = 'interpolated_pock_volume',
-                                      chunksize: int = 100000) -> None:
+                                      chunksize: int = 100000,
+                                      min_zero_fraction: float = MIN_ZERO_FRACTION,
+                                      min_consecutive_zero_frames: float = MIN_CONSECUTIVE_ZERO_FRAMES) -> None:
     """
-    Add max_consecutive_zero_frames column by reading large file in chunks.
+    Add n_zero_frames, max_consecutive_zero_frames and transient columns by reading
+    a large file in chunks -- same definition as classify_transient(), for files too
+    big to load in memory at once.
 
     Parameters:
     -----------
     data_path : str
         Path to input CSV file
     output_path : str
-        Path to save output CSV with new column
+        Path to save output CSV with new columns
     volume_col : str
         Name of volume column
     chunksize : int
@@ -107,42 +172,50 @@ def add_max_consecutive_zeros_chunked(data_path: str,
     --------
     None (saves to disk)
     """
-
     print(f"\nReading data in chunks from: {data_path}")
     print(f"Chunk size: {chunksize:,} rows")
 
-    # First pass: read entire file to group by ID and calculate max zeros
-    print("\n[PASS 1] Calculating max consecutive zeros for each pocket...")
+    # First pass: read entire file to group by ID and collect per-frame volumes
+    print("\n[PASS 1] Collecting per-frame volumes for each pocket...")
 
-    max_zero_dict = {}
-    all_ids_seen = {}
+    all_ids_seen: Dict[str, Dict[object, float]] = {}
 
     for i, chunk in enumerate(pd.read_csv(data_path, chunksize=chunksize)):
         if i % 10 == 0:
             print(f"  Processed chunk {i}...")
 
         for pocket_id, group in chunk.groupby('ID'):
-            if pocket_id not in all_ids_seen:
-                all_ids_seen[pocket_id] = []
+            frame_volumes = all_ids_seen.setdefault(pocket_id, {})
+            # dedupe to one value per snapshot (multiple alpha spheres share a frame's volume)
+            for snapshot, volume in zip(group['snapshot'], group[volume_col]):
+                frame_volumes.setdefault(snapshot, volume)
 
-            # Store volume data sorted by snapshot
-            sorted_group = group.sort_values('snapshot')
-            all_ids_seen[pocket_id].extend(sorted_group[volume_col].tolist())
+    # Calculate zero-frame stats and transiency for each pocket
+    print("\n[PASS 1] Calculating consecutive/total zero frames...")
 
-    # Calculate max consecutive zeros for each pocket
-    print("\n[PASS 1] Calculating consecutive zeros...")
-    for pocket_id, volumes in all_ids_seen.items():
-        max_zero_dict[pocket_id] = find_max_consecutive_zeros(np.array(volumes))
+    n_zero_dict = {}
+    max_zero_dict = {}
+    transient_dict = {}
+    for pocket_id, frame_volumes in all_ids_seen.items():
+        volumes = np.array([frame_volumes[s] for s in sorted(frame_volumes)])
+        n_zero = int((volumes == 0.0).sum())
+        max_consecutive = find_max_consecutive_zeros(volumes)
+        n_zero_dict[pocket_id] = n_zero
+        max_zero_dict[pocket_id] = max_consecutive
+        transient_dict[pocket_id] = (n_zero >= min_zero_fraction * len(volumes)
+                                     and max_consecutive >= min_consecutive_zero_frames)
 
-    # Second pass: read file again and add the new column
-    print("\n[PASS 2] Writing file with new column...")
+    # Second pass: read file again and add the new columns
+    print("\n[PASS 2] Writing file with new columns...")
 
     first_chunk = True
     for i, chunk in enumerate(pd.read_csv(data_path, chunksize=chunksize)):
         if i % 10 == 0:
             print(f"  Writing chunk {i}...")
 
+        chunk['n_zero_frames'] = chunk['ID'].map(n_zero_dict)
         chunk['max_consecutive_zero_frames'] = chunk['ID'].map(max_zero_dict)
+        chunk['transient'] = chunk['ID'].map(transient_dict)
 
         if first_chunk:
             chunk.to_csv(output_path, mode='w', index=False)
@@ -190,7 +263,8 @@ def summarize_consecutive_zeros(df: pd.DataFrame) -> None:
     print(f"  1-3 frames (noise): {((pocket_summary > 0) & (pocket_summary <= 3)).sum():,} pockets")
     print(f"  4-10 frames: {((pocket_summary > 3) & (pocket_summary <= 10)).sum():,} pockets")
     print(f"  11-50 frames: {((pocket_summary > 10) & (pocket_summary <= 50)).sum():,} pockets")
-    print(f"  >50 frames (true transient): {(pocket_summary > 50).sum():,} pockets")
+    print(f"  >{MIN_CONSECUTIVE_ZERO_FRAMES:.0f} frames (meets the consecutive half of the transient definition, "
+          f"see classify_transient): {(pocket_summary > MIN_CONSECUTIVE_ZERO_FRAMES).sum():,} pockets")
 
 
 # =============================================================================
