@@ -3,11 +3,9 @@ global_id_and_comparison.py, and the taar_paper_figures/ readers downstream of t
 
 The big per-pocket tables (all_pockets, pocket_summary, pocket_comparison_table) are written
 as BOTH a .csv and a .parquet under the same saving_loc; every reader goes through load_table()
-below instead of a hardcoded pd.read_csv, so either format can be deleted/regenerated
-independently and callers don't care which one is actually on disk.
+below instead of a hardcoded pd.read_csv.
 """
 import os
-
 import pandas as pd
 
 

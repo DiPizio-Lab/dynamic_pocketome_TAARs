@@ -2,6 +2,7 @@
 https://github.com/Discngine/fpocket """
 import re
 import shutil
+import stat
 import datetime
 import pandas as pd
 import numpy as np
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import config as conf
 from scripts import extract_iso as iso
 from scripts import logging as logger
+from scripts import run_summary
 from sklearn import cluster
 from sklearn.metrics import silhouette_score
 import subprocess
@@ -24,6 +26,23 @@ pd.set_option('expand_frame_repr', False)
 working_dir = os.getcwd()
 
 # TODO: xtc dcd check
+
+
+def _copy_executable(src, dst):
+    """shutil.copyfile (data only) + best-effort chmod +x -- for the atclus binary, which is
+    run as ./atclus right after being copied into place (see _mdpocket_run_dbscan_alternative).
+    shutil.copy's implicit copymode() step raises EPERM on this dataset's CIFS output mount
+    (nounix, file_mode/dir_mode fixed by the mount options -- there is no real per-file Unix
+    mode for the SMB server to set, so any chmod there is rejected). The chmod here is
+    best-effort so this still works unchanged on a normal POSIX filesystem, where it actually
+    restores the execute bit that copyfile alone (unlike shutil.copy) does not carry over; on
+    the CIFS mount it's a no-op since every file already shows up as 0777 regardless."""
+    shutil.copyfile(src, dst)
+    try:
+        mode = os.stat(dst).st_mode
+        os.chmod(dst, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    except OSError:
+        pass
 
 class PocketAnalysis:
     """ stores method for pocket search on GPCRs class A;
@@ -77,9 +96,9 @@ class PocketAnalysis:
         topology = self.topology.split('/')[-1]
         # copy trajectory and topology into pocket_dir
         if not os.path.exists( os.path.join(curr_pocket_dir, trajectory)):
-            shutil.copy(self.trajectory, os.path.join(curr_pocket_dir, trajectory))
+            shutil.copyfile(self.trajectory, os.path.join(curr_pocket_dir, trajectory))
         if not os.path.exists(os.path.join(curr_pocket_dir, topology)):
-            shutil.copy(self.topology, os.path.join(curr_pocket_dir, topology))
+            shutil.copyfile(self.topology, os.path.join(curr_pocket_dir, topology))
 
         if self.trajectory.endswith('.dcd'):
             subprocess.run([f'mdpocket --trajectory_file {trajectory} --trajectory_format dcd -f {topology}'],
@@ -94,23 +113,24 @@ class PocketAnalysis:
                              f'You specified {self.trajectory} as input.')
         os.chdir(working_dir)
 
-    def _extract_iso_mdpocket(self, isovalue, density):
-        """Using the extractIsoPdb.py included in mdpocket to save a PDB file of specific Isovalues"""
+    def _extract_iso_mdpocket(self, isovalue, density, grid_dir=None):
+        """Using the extractIsoPdb.py included in mdpocket to save a PDB file of specific Isovalues.
+        grid_dir: directory to read the (isovalue-independent) density/frequency grid from --
+        defaults to self.pocket_dir. The output PDB always goes to self.pocket_dir, which
+        pocket_search()'s per-isovalue loop may have pointed at an isovalue_<X.X> subdirectory,
+        so a run split across several isovalues still reads the one grid computed once for all
+        of them."""
+        out_dir = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir)
+        grid_dir = grid_dir or out_dir
         # default is density grid
-        grid_file = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir,
-                                             'mdpout_dens_grid.dx')
-        output_name = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir,
-                                   f'mdpout_dens_iso_{isovalue}.pdb')
+        grid_file = os.path.join(grid_dir, 'mdpout_dens_grid.dx')
+        output_name = os.path.join(out_dir, f'mdpout_dens_iso_{isovalue}.pdb')
         if not density:
-            grid_file = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir,
-                                     'mdpout_freq_grid.dx')
-            output_name = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir,
-                                       f'mdpout_freq_iso_{isovalue}.pdb')
+            grid_file = os.path.join(grid_dir, 'mdpout_freq_grid.dx')
+            output_name = os.path.join(out_dir, f'mdpout_freq_iso_{isovalue}.pdb')
         elif density:
-            grid_file = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir,
-                                                 'mdpout_dens_grid.dx')
-            output_name = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir,
-                                       f'mdpout_dens_iso_{isovalue}.pdb')
+            grid_file = os.path.join(grid_dir, 'mdpout_dens_grid.dx')
+            output_name = os.path.join(out_dir, f'mdpout_dens_iso_{isovalue}.pdb')
 
         iso.extract_iso_pdb(grid_file, output_name, isovalue)
 
@@ -214,12 +234,12 @@ class PocketAnalysis:
             if not os.path.exists(os.path.join(results_dir, self.pocket_dir)):
                 os.mkdir(os.path.join(results_dir, self.pocket_dir))
             # copy the exe into the same directory as the data to be able to run it
-            shutil.copy(os.path.join(atclus_dir, 'atclus.f'), os.path.join(results_dir, self.pocket_dir, 'atclus.f'))
-            shutil.copy(os.path.join(atclus_dir, 'atclus.inc'),
+            shutil.copyfile(os.path.join(atclus_dir, 'atclus.f'), os.path.join(results_dir, self.pocket_dir, 'atclus.f'))
+            shutil.copyfile(os.path.join(atclus_dir, 'atclus.inc'),
                         os.path.join(results_dir,self.pocket_dir, 'atclus.inc'))
-            shutil.copy(os.path.join(atclus_dir, 'atclus.o'), os.path.join(results_dir, self.pocket_dir, 'atclus.o'))
+            shutil.copyfile(os.path.join(atclus_dir, 'atclus.o'), os.path.join(results_dir, self.pocket_dir, 'atclus.o'))
             # shutil.copy(os.path.join(atclus_dir, 'go_clean'), os.path.join(results_dir, POCKET_DIR, 'go_clean'))
-            shutil.copy(os.path.join(atclus_dir, 'atclus'), os.path.join(results_dir, self.pocket_dir, 'atclus'))
+            _copy_executable(os.path.join(atclus_dir, 'atclus'), os.path.join(results_dir, self.pocket_dir, 'atclus'))
             # running fortran77 code via command-line via subprocess
             for isofile in iso_files:
                 os.chdir(os.path.join(results_dir, self.pocket_dir))
@@ -267,9 +287,9 @@ class PocketAnalysis:
             topology = self.topology.split('/')[-1]
             # copy trajectory and topology into pocket_dir
             if not os.path.exists(os.path.join(pocket_folder, trajectory)):
-                shutil.copy(self.trajectory, os.path.join(pocket_folder, trajectory))
+                shutil.copyfile(self.trajectory, os.path.join(pocket_folder, trajectory))
             if not os.path.exists(os.path.join(pocket_folder, topology)):
-               shutil.copy(self.topology, os.path.join(pocket_folder, topology))
+               shutil.copyfile(self.topology, os.path.join(pocket_folder, topology))
 
             subprocess.run([f'mdpocket -S --trajectory_file {trajectory} '
                             f'--trajectory_format {trajectory.split('.')[-1]} '
@@ -301,9 +321,9 @@ class PocketAnalysis:
         topology = self.topology.split('/')[-1]
         # copy trajectory and topology into pocket_dir
         if not os.path.exists(os.path.join(pocket_dir, trajectory)):
-            shutil.copy(self.trajectory, os.path.join(pocket_dir, trajectory))
+            shutil.copyfile(self.trajectory, os.path.join(pocket_dir, trajectory))
         if not os.path.exists(os.path.join(pocket_dir, topology)):
-            shutil.copy(self.topology, os.path.join(pocket_dir, topology))
+            shutil.copyfile(self.topology, os.path.join(pocket_dir, topology))
         if self.trajectory.endswith('.dcd'):
             subprocess.run([f'mdpocket -S --trajectory_file {trajectory} --trajectory_format dcd -f '
                             f'{topology} --selected_pocket {pocket_file} -d -o {output_name}'],
@@ -411,7 +431,7 @@ class PocketAnalysis:
                 return False
         return True
 
-    def pocket_search(self, density=True, dbscan=False, isovalues=[3],
+    def pocket_search(self, density=True, dbscan=False, isovalues=None,
                       parallel=True):
         """This method is based on MDpocket:
                [paper by Peter Schmldtke, Axel Bidon-Chanal, Javier Luque, Xavier Barril,
@@ -421,15 +441,40 @@ class PocketAnalysis:
             saved in results_dbscan_new/curr_proj/curr_rep/pockets called aligned_traj.dcd and aligned_top.pdb. This is due to the
             behaviour of MDpocket which can only be executed from the subdirectory of the traj/top files
             and will not accept absolute paths / formatted strings. Also, there is no druggability score given...
-            The Input is therefore none"""
-        logger.log(f'Pocket Analysis Starting. The directory used is {self.pocket_dir}. \n')
-        if not dbscan and self._pocket_search_complete(isovalues):
-            if self.verbose:
-                print(f'INFO: Pocket search for {self.curr_proj}_{self.curr_rep} already has descriptor files '
-                      f'for every pocket ATClus found (isovalues {isovalues}) - not repeated.')
-            logger.log(f'INFO: Pocket search for {self.curr_proj}_{self.curr_rep} already has descriptor files '
-                      f'for every pocket ATClus found (isovalues {isovalues}) - not repeated.')
-            return
+            The Input is therefore none
+
+            isovalues defaults to conf.ISOVALUES and must be floats (e.g. 3.0, not 3) -- see
+            conf.require_float_isovalues(). mdpocket's first run (the density/frequency grid) is
+            isovalue-independent and runs once, shared, in self.pocket_dir; extraction/separation/
+            description then run once per isovalue, each isovalue getting its own
+            self.pocket_dir/isovalue_<X.X> subdirectory (conf.isovalue_subpath()) so that no two
+            isovalues' pockets are ever numbered or clustered together downstream. A single
+            isovalue keeps the flat self.pocket_dir layout, unchanged from before this split."""
+        isovalues = conf.require_float_isovalues(conf.ISOVALUES if isovalues is None else isovalues)
+        base_pocket_dir = self.pocket_dir
+        state, pdb_id = run_summary.parse_experiment(self.curr_proj)
+        logger.log(f'Pocket Analysis Starting. The directory used is {base_pocket_dir}. \n')
+
+        def _iso_pocket_dir(isovalue):
+            return conf.isovalue_subpath(base_pocket_dir, isovalue, isovalues)
+
+        if not dbscan:
+            all_complete = True
+            for isovalue in isovalues:
+                self.pocket_dir = _iso_pocket_dir(isovalue)
+                if not self._pocket_search_complete([isovalue]):
+                    all_complete = False
+            self.pocket_dir = base_pocket_dir
+            if all_complete:
+                if self.verbose:
+                    print(f'INFO: Pocket search for {self.curr_proj}_{self.curr_rep} already has descriptor files '
+                          f'for every pocket ATClus found (isovalues {isovalues}) - not repeated.')
+                logger.log(f'INFO: Pocket search for {self.curr_proj}_{self.curr_rep} already has descriptor files '
+                          f'for every pocket ATClus found (isovalues {isovalues}) - not repeated.')
+                for stage_name in ('pocket_detection', 'pocket_separation', 'pocket_characterisation'):
+                    run_summary.update_checkpoint(state, pdb_id, self.curr_rep, stage_name, 'OK',
+                                                  'already complete, not repeated')
+                return
         # I: creates the subdir "pockets" if it doesn't exist
         if not os.path.exists(os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir)):
             os.makedirs(os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir))
@@ -445,9 +490,9 @@ class PocketAnalysis:
         trj_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir, trajectory)
         top_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, self.pocket_dir, topology)
         if not os.path.exists(trj_path):
-            shutil.copy(self.trajectory, trj_path)
+            shutil.copyfile(self.trajectory, trj_path)
         if not os.path.exists(top_path):
-            shutil.copy(self.topology, top_path)
+            shutil.copyfile(self.topology, top_path)
         # II: check that the User understands what is used as input
         if not os.path.exists(trj_path) and not os.path.exists(top_path):
             logger.log(f'FILE NOT FOUND ERROR: There is no trajectory file named "{self.trajectory}" and no file named '
@@ -484,32 +529,52 @@ class PocketAnalysis:
                        f'Please read the documentation of the Pocket Search Tool.')
         # III: Call the actual runs of MDpocket and the intermediate data preparation (clustering, PDB file management)
         start_run1 = time.time()
-        self._mdpocket_run_one()
+        with run_summary.stage(state, pdb_id, self.curr_rep, 'pocket_detection'):
+            self._mdpocket_run_one()
         end_run1 = time.time()
         print(f'Finding Pockets took {(end_run1 - start_run1) / 60} minutes')
         print('Starting IsoValue Extraction')
         logger.log(f'Finding Pockets took {(end_run1 - start_run1) / 60} minutes \n Starting IsoValue Extraction')
-        if not density:
-            for isovalue in isovalues:
-                self._extract_iso_mdpocket(isovalue=isovalue, density=density)
-            start_prep = time.time()
-            self._prep_for_second_run(isovalues=isovalues, dbscan=dbscan, verbose=self.verbose)
-            end_prep = time.time()
-        elif density:
-            for isovalue in isovalues:
-                self._extract_iso_mdpocket(isovalue=isovalue, density=density)
-            start_prep = time.time()
-            self._prep_for_second_run(isovalues=isovalues, dbscan=dbscan, verbose=self.verbose)
-            end_prep = time.time()
-        print(f'Separating Pockets took {(end_prep - start_prep) / 60} minutes')
-        logger.log(f'Separating Pockets took {(end_prep - start_prep) / 60} minutes')
-        start_run2 = time.time()
-        cpus_used = self._parallel_mdpocket_run_two(parallel=parallel, dbscan=dbscan)
-        end_run2 = time.time()
-        print(f'Describing Pockets took {(end_run2 - start_run2) / 60} minutes using {cpus_used} cores')
-        end_datetime = datetime.datetime.now()
-        print(f'End Pocket Hunting at {end_datetime} . '
-              f'The results are saved in the subdirectory {self.pocket_dir}.')
-        logger.log(f'Describing Pockets took {(end_run2 - start_run2) / 60} minutes using {cpus_used} cores \n'
-                   f'End Pocket Hunting at {end_datetime} . '
-                   f'The results are saved in the subdirectory {self.pocket_dir}.')
+
+        base_pocket_dir_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep,
+                                            base_pocket_dir)
+        # IV: extraction/separation/description, once per isovalue -- each isovalue gets its own
+        # self.pocket_dir (flat base_pocket_dir if there's only one isovalue, else an
+        # isovalue_<X.X> subdirectory of it), so isovalues are never mixed downstream. The grid
+        # computed once above (in base_pocket_dir) is shared -- read explicitly from there via
+        # grid_dir regardless of which isovalue's directory self.pocket_dir currently points at.
+        for isovalue in isovalues:
+            self.pocket_dir = _iso_pocket_dir(isovalue)
+            iso_pocket_dir_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep,
+                                               self.pocket_dir)
+            if not os.path.exists(iso_pocket_dir_path):
+                os.makedirs(iso_pocket_dir_path)
+
+            with run_summary.stage(state, pdb_id, self.curr_rep, 'pocket_separation'):
+                if not density:
+                    self._extract_iso_mdpocket(isovalue=isovalue, density=density, grid_dir=base_pocket_dir_path)
+                    start_prep = time.time()
+                    self._prep_for_second_run(isovalues=[isovalue], dbscan=dbscan, verbose=self.verbose)
+                    end_prep = time.time()
+                elif density:
+                    self._extract_iso_mdpocket(isovalue=isovalue, density=density, grid_dir=base_pocket_dir_path)
+                    start_prep = time.time()
+                    self._prep_for_second_run(isovalues=[isovalue], dbscan=dbscan, verbose=self.verbose)
+                    end_prep = time.time()
+            print(f'Separating Pockets for isovalue {isovalue} took {(end_prep - start_prep) / 60} minutes')
+            logger.log(f'Separating Pockets for isovalue {isovalue} took {(end_prep - start_prep) / 60} minutes')
+            start_run2 = time.time()
+            with run_summary.stage(state, pdb_id, self.curr_rep, 'pocket_characterisation'):
+                cpus_used = self._parallel_mdpocket_run_two(parallel=parallel, dbscan=dbscan)
+            end_run2 = time.time()
+            print(f'Describing Pockets for isovalue {isovalue} took {(end_run2 - start_run2) / 60} minutes '
+                  f'using {cpus_used} cores')
+            end_datetime = datetime.datetime.now()
+            print(f'End Pocket Hunting for isovalue {isovalue} at {end_datetime} . '
+                  f'The results are saved in the subdirectory {self.pocket_dir}.')
+            logger.log(f'Describing Pockets for isovalue {isovalue} took {(end_run2 - start_run2) / 60} minutes '
+                       f'using {cpus_used} cores \n'
+                       f'End Pocket Hunting for isovalue {isovalue} at {end_datetime} . '
+                       f'The results are saved in the subdirectory {self.pocket_dir}.')
+
+        self.pocket_dir = base_pocket_dir

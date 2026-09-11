@@ -53,10 +53,13 @@ STABILITY_COLORS_GREY = {
     'Transient': '#bdbdbd'  # Light grey
 }
 
-# For state categories (2 colors: apo, holo)
+# For state categories (2 colors: apo, holo) -- sand / dusty burgundy, matching
+# taar_paper_figures/taar_style.py's STATE_COLORS (single source of truth for this
+# palette). Deliberately not sampled from Viridis: these plots also use Viridis for
+# volume categories, so state needs to read as visually distinct from that scale.
 STATE_COLORS = {
-    'apo': px.colors.sample_colorscale("Viridis", 0.35)[0],  # Teal
-    'holo': px.colors.sample_colorscale("Viridis", 0.7)[0]  # Blue
+    'apo': '#D9B98B',   # sand
+    'holo': '#9B5560'   # mauve / dusty burgundy
 }
 
 STATE_COLORS_GREY = {
@@ -114,23 +117,21 @@ def save_plotly_figure(fig, filepath_base, width=None, height=None, scale=None):
     html_path = f"{filepath_base}.html"
     fig.write_html(html_path, include_plotlyjs='cdn')
     saved_files['html'] = html_path
-    print(f"  Saved: {os.path.basename(html_path)}")
 
     # Save PNG and PDF (requires kaleido)
     try:
         png_path = f"{filepath_base}.png"
         fig.write_image(png_path, format='png', width=width, height=height, scale=scale)
         saved_files['png'] = png_path
-        print(f"  Saved: {os.path.basename(png_path)}")
 
         pdf_path = f"{filepath_base}.pdf"
         fig.write_image(pdf_path, format='pdf', width=width, height=height, scale=scale)
         saved_files['pdf'] = pdf_path
-        print(f"  Saved: {os.path.basename(pdf_path)}")
 
     except Exception as e:
         print(f"  WARNING: Could not export PNG/PDF ({type(e).__name__}). Install kaleido: pip install -U kaleido")
 
+    print(f"Saved {os.path.basename(filepath_base)} ({', '.join(saved_files)})")
     return saved_files
 
 
@@ -158,13 +159,12 @@ def save_matplotlib_figure(fig, filepath_base, dpi=None):
     png_path = f"{filepath_base}.png"
     fig.savefig(png_path, dpi=dpi, bbox_inches='tight', facecolor='white', edgecolor='none')
     saved_files['png'] = png_path
-    print(f"  Saved: {os.path.basename(png_path)}")
 
     pdf_path = f"{filepath_base}.pdf"
     fig.savefig(pdf_path, bbox_inches='tight', facecolor='white', edgecolor='none')
     saved_files['pdf'] = pdf_path
-    print(f"  Saved: {os.path.basename(pdf_path)}")
 
+    print(f"Saved {os.path.basename(filepath_base)} ({', '.join(saved_files)})")
     return saved_files
 
 
@@ -306,10 +306,8 @@ def update_color_scheme(volume_colors=None, stability_colors=None, state_colors=
             'Stable': px.colors.sample_colorscale("Viridis", stab_positions[1])[0],
             'Transient': '#1a5e1a'  # Keep dark green for transient
         }
-        STATE_COLORS = {
-            'apo': px.colors.sample_colorscale("Viridis", stab_positions[0])[0],
-            'holo': px.colors.sample_colorscale("Viridis", stab_positions[1])[0]
-        }
+        # STATE_COLORS (apo/holo) stays fixed to sand/mauve regardless of viridis_range --
+        # it's not part of the Viridis continuum, see the module-level comment above.
         DEFAULT_PLOT_COLOR = px.colors.sample_colorscale("Viridis",
                                                          (viridis_range[0] + viridis_range[1]) / 2)[0]
 
@@ -476,8 +474,6 @@ def plot_largest_pockets(saving_loc, pocket_df, pdb_file=None, bw_csv_file=None,
                          downsample_timeseries=None):
     """
     Plot largest pocket with interactive subplots for volume and hydrophobicity over time.
-
-    OPTIMIZED VERSION:
     - 3D scatter plot uses ONLY FIRST FRAME to reduce file size
     - Time series plots use all frames (or downsampled if specified)
     - Uses global VIRIDIS_RANGE for color generation
@@ -489,15 +485,12 @@ def plot_largest_pockets(saving_loc, pocket_df, pdb_file=None, bw_csv_file=None,
     pocket_df['y'] = pd.to_numeric(pocket_df['y'], errors='coerce')
     pocket_df['z'] = pd.to_numeric(pocket_df['z'], errors='coerce')
 
-    # Round coordinates to reduce precision (saves space)
     pocket_df['x'] = pocket_df['x'].round(2)
     pocket_df['y'] = pocket_df['y'].round(2)
     pocket_df['z'] = pocket_df['z'].round(2)
 
-    # Remove NaN rows
     pocket_df = pocket_df.dropna(subset=['x', 'y', 'z', volume_col])
 
-    # Extract unique PDB ID + replicate combinations
     pocket_df['state_pdbid'] = pocket_df['ID'].apply(lambda x: extract_pdbid_info(x)[0])
     pocket_df['rep'] = pocket_df['ID'].apply(lambda x: extract_pdbid_info(x)[3])
 
@@ -508,7 +501,6 @@ def plot_largest_pockets(saving_loc, pocket_df, pdb_file=None, bw_csv_file=None,
 
     print(f"Found {len(combination_labels) - 1} unique PDB ID / replicate combinations")
 
-    # Report data reduction
     total_points = len(pocket_df)
     first_frame_points = len(get_first_frame_data(pocket_df))
     print(f"Total data points: {total_points:,}")
@@ -1264,8 +1256,9 @@ def plot_hierarchical_stability(pocket_df, transient_dict, saving_loc,
     """
     Create hierarchical bar plot showing stability per PDB ID > State > Replicate.
 
-    Layout: Subplots arranged in grid, each subplot shows one PDB ID with
-    6 bars (apo rep1, apo rep2, apo rep3, holo rep1, holo rep2, holo rep3)
+    Layout: Subplots arranged in grid, each subplot shows one PDB ID with one bar per
+    (state, replicate) actually present in the data (e.g. apo rep1, apo rep2, holo
+    rep1, holo rep2 for a 2-replicate dataset)
 
     Parameters:
     -----------
@@ -1303,10 +1296,12 @@ def plot_hierarchical_stability(pocket_df, transient_dict, saving_loc,
         vertical_spacing=0.12
     )
 
-    # Define x-axis structure for each subplot
+    # Define x-axis structure for each subplot -- reps are whatever replicates are
+    # actually present in the data, not a fixed count, so e.g. a 2-replicate dataset
+    # doesn't get a phantom, always-empty "rep 3" bar
     states = ['apo', 'holo']
-    reps = ['1', '2', '3']
-    x_labels = [f'{s} r{r}' for s in states for r in reps]  # ['apo r1', 'apo r2', 'apo r3', 'holo r1', ...]
+    reps = sorted(pocket_summary['rep'].dropna().unique(), key=str)
+    x_labels = [f'{s} r{r}' for s in states for r in reps]  # ['apo r1', 'apo r2', ..., 'holo r1', ...]
 
     for idx, pdb_id in enumerate(pdb_ids):
         row = idx // n_cols + 1
@@ -1413,7 +1408,7 @@ def plot_hierarchical_volume_categories(pocket_df, saving_loc,
     )
 
     states = ['apo', 'holo']
-    reps = ['1', '2', '3']
+    reps = sorted(pocket_summary['rep'].dropna().unique(), key=str)
     x_labels = [f'{s} r{r}' for s in states for r in reps]
 
     for idx, pdb_id in enumerate(pdb_ids):
@@ -1789,14 +1784,12 @@ def create_all_distribution_plots(pocket_df, transient_dict, saving_loc,
     greyscale : bool, optional
         Override global GREYSCALE_MODE
     """
-    print("=" * 60)
-    print("Creating ALL distribution plots")
-    print("=" * 60)
+    print("Creating all distribution plots")
 
     # Create output directory if it doesn't exist
     os.makedirs(saving_loc, exist_ok=True)
 
-    print("\n--- 1. Hierarchical plots (all replicates) ---")
+    print("1. Hierarchical plots (all replicates)")
     plot_hierarchical_stability(pocket_df, transient_dict, saving_loc,
                                 out_prefix='hierarchical_stability',
                                 n_cols=n_cols, greyscale=greyscale)
@@ -1805,20 +1798,18 @@ def create_all_distribution_plots(pocket_df, transient_dict, saving_loc,
                                         out_prefix='hierarchical_volume',
                                         n_cols=n_cols, greyscale=greyscale)
 
-    print("\n--- 2. Aggregated plots (median across replicates) ---")
+    print("2. Aggregated plots (median across replicates)")
     plot_aggregated_by_structure(pocket_df, transient_dict, saving_loc, volume_col,
                                  out_prefix='aggregated_median',
                                  aggregation='median',
                                  group_apo_holo=True, greyscale=greyscale)
 
-    print("\n--- 3. Overall distribution plots (all pockets) ---")
+    print("3. Overall distribution plots (all pockets)")
     plot_overall_distributions(pocket_df, transient_dict, saving_loc, volume_col,
                                out_prefix='overall',
                                greyscale=greyscale)
 
-    print("\n" + "=" * 60)
-    print("All distribution plots created successfully!")
-    print("=" * 60)
+    print("All distribution plots created successfully.")
 
 
 # =============================================================================
@@ -2547,20 +2538,21 @@ def plot_3d_apo_holo_comparison(saving_loc, df='first_frame_summary_df.csv',
     with open(output_path, 'w') as f:
         f.write(html_string)
 
-    print(f"  Saved: {out_html}")
-
     # Also save PNG and PDF (static versions)
     out_base = out_html.replace('.html', '')
+    saved_formats = ['html']
     try:
         png_path = os.path.join(saving_loc, f"{out_base}.png")
         fig.write_image(png_path, format='png', width=2700, height=900, scale=DEFAULT_SCALE)
-        print(f"  Saved: {out_base}.png")
+        saved_formats.append('png')
 
         pdf_path = os.path.join(saving_loc, f"{out_base}.pdf")
         fig.write_image(pdf_path, format='pdf', width=2700, height=900, scale=DEFAULT_SCALE)
-        print(f"  Saved: {out_base}.pdf")
+        saved_formats.append('pdf')
     except Exception as e:
         print(f"  WARNING: Could not export PNG/PDF ({type(e).__name__}). Install kaleido: pip install -U kaleido")
+
+    print(f"Saved {out_base} ({', '.join(saved_formats)})")
 
     print(f"Found {len(paired_pdbs)} PDB IDs with both apo and holo states")
     print(f"Total unique pocket IDs: {len(unique_ids)}")
@@ -2582,7 +2574,7 @@ def vis_apo_holo_number_pockets(df, figsize=(14, 6), save_path=None, version='me
         Path to save the figure. If None, figure is displayed but not saved.
     version : str, optional
         'median' - Plot median pocket counts across replicates (default)
-        'replicates' - Plot 3 subplots, one for each replicate
+        'replicates' - Plot one subplot per replicate actually present in the data
 
     Returns:
     --------
@@ -2614,9 +2606,9 @@ def vis_apo_holo_number_pockets(df, figsize=(14, 6), save_path=None, version='me
         name='voxel_count')
     pocket_summary = pocket_counts.groupby(['state', 'pdb_id', 'replicate']).size().reset_index(name='num_pockets')
 
-    # Define colors
-    apo_color = '#808080'  # Grey for apo
-    holo_color = '#00008B'  # Dark blue for holo
+    # Define colors -- sand / mauve, matching STATE_COLORS
+    apo_color = STATE_COLORS['apo']
+    holo_color = STATE_COLORS['holo']
 
     if version == 'median':
         return _plot_median(pocket_summary, figsize, save_path, apo_color, holo_color)
@@ -2662,7 +2654,8 @@ def _plot_median(pocket_summary, figsize, save_path, apo_color, holo_color):
     # Customize the plot
     ax.set_xlabel('PDB ID', fontsize=13, fontweight='bold')
     ax.set_ylabel('Median Number of Pockets', fontsize=13, fontweight='bold')
-    ax.set_title('Median Number of Pockets per PDB ID: Apo vs Holo States\n(across 3 replicates)',
+    n_reps = pocket_summary['replicate'].nunique()
+    ax.set_title(f'Median Number of Pockets per PDB ID: Apo vs Holo States\n(across {n_reps} replicates)',
                  fontsize=15, fontweight='bold', pad=20)
     ax.set_xticks(x)
     ax.set_xticklabels(pivot_data.index, rotation=45, ha='right', fontsize=11)
@@ -2695,13 +2688,17 @@ def _plot_median(pocket_summary, figsize, save_path, apo_color, holo_color):
 
 
 def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
-    """Create 3 subplots stacked vertically, one for each replicate"""
+    """Create one subplot per replicate actually present in the data, stacked vertically"""
 
-    # Create figure with 3 subplots
-    fig, axes = plt.subplots(3, 1, figsize=(figsize[0], figsize[1] * 2.5), sharex=True)
+    replicates = sorted(pocket_summary['replicate'].dropna().unique(), key=str)
+    n_reps = len(replicates)
+
+    fig, axes = plt.subplots(n_reps, 1, figsize=(figsize[0], figsize[1] * 2.5 * n_reps / 3), sharex=True)
+    if n_reps == 1:
+        axes = [axes]
 
     # Process each replicate
-    for rep_idx, replicate in enumerate(['1', '2', '3']):
+    for rep_idx, replicate in enumerate(replicates):
         ax = axes[rep_idx]
 
         rep_data = pocket_summary[pocket_summary['replicate'] == replicate].copy()
@@ -2752,7 +2749,7 @@ def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
         add_value_labels(bars2)
 
     # Set common x-axis label
-    axes[2].set_xlabel('PDB ID', fontsize=13, fontweight='bold')
+    axes[-1].set_xlabel('PDB ID', fontsize=13, fontweight='bold')
 
     # Overall title
     fig.suptitle('Number of Pockets per PDB ID: Apo vs Holo States\n(Individual Replicates)',
@@ -2773,27 +2770,16 @@ def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
 # Volume of binding site
 
 def _load_summary_data_for_binding_site(summary_csv_path):
-    """Load summary data w/ timing."""
-    print(f"Loading summary data...")
-    print(f"From: {summary_csv_path}")
-
+    """Load the (prj, rep, pocket_number, snapshot, interpolated_pock_volume, ID) columns
+    needed by plot_binding_site_volume_violin, in chunks (the source CSV can be too large to
+    read at once)."""
     if not os.path.exists(summary_csv_path):
         raise FileNotFoundError(f"File not found: {summary_csv_path}")
 
-    chunk_size = 200000
-    chunks = []
-    total_rows = 0
-
-    needed_cols = ['prj', 'rep', 'pocket_number', 'interpolated_pock_volume', 'ID']
-
-    for i, chunk in enumerate(pd.read_csv(summary_csv_path, usecols=needed_cols, chunksize=chunk_size)):
-        chunks.append(chunk)
-        total_rows += len(chunk)
-        if (i + 1) % 50 == 0:
-            print(f"  Read {total_rows:,} rows...")
-
+    needed_cols = ['prj', 'rep', 'pocket_number', 'snapshot', 'interpolated_pock_volume', 'ID']
+    chunks = [chunk for chunk in pd.read_csv(summary_csv_path, usecols=needed_cols, chunksize=200000)]
     df = pd.concat(chunks, ignore_index=True)
-    print(f"Loaded {len(df):,} rows")
+    print(f"Loaded {len(df):,} rows from {summary_csv_path}")
 
     return df
 
@@ -2835,19 +2821,13 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     dict : Paths to generated plot files
         {'combined': path, 'individual': [list of paths]}
     """
-    print("Orthosteric Binding Site Analysis...")
-    # Create subdirectory
     violin_dir = os.path.join(saving_loc, 'violin_plots_volume')
     os.makedirs(violin_dir, exist_ok=True)
-    print(f"\nSaving plot to: {violin_dir}")
-
-    # Get orthosteric/binding site Local Pocket IDs
-    print("\nIdentifying orthosteric pockets...")
 
     ortho_col = 'is_orthosteric'
     if ortho_col not in pocket_comparison_df.columns:
-        print(f"ERROR: No '{ortho_col}' column found.")
-        print(f"Available columns: {list(pocket_comparison_df.columns)}")
+        print(f"ERROR: No '{ortho_col}' column found in pocket_comparison_df "
+              f"(available: {list(pocket_comparison_df.columns)})")
         return None
 
     # Check for ID column (support both 'Local Pocket ID' and 'ID')
@@ -2856,11 +2836,9 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     elif 'ID' in pocket_comparison_df.columns:
         id_col = 'ID'
     else:
-        print("ERROR: No ID column found. Expected 'Local Pocket ID' or 'ID'")
-        print(f"Available columns: {list(pocket_comparison_df.columns)}")
+        print(f"ERROR: No ID column found in pocket_comparison_df. Expected 'Local Pocket ID' or 'ID' "
+              f"(available: {list(pocket_comparison_df.columns)})")
         return None
-
-    print(f"  Using ID column: '{id_col}'")
 
     binding_pockets = pocket_comparison_df[
         pocket_comparison_df[ortho_col] == True
@@ -2871,54 +2849,42 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
         return None
 
     binding_local_ids = binding_pockets[id_col].unique()
-    print(f"Found {len(binding_local_ids)} orthosteric pocket IDs")
-    print(f"Examples: {list(binding_local_ids[:3])}")
 
     # Load summary data
     if summary_df is None:
         if summary_csv_path is None:
             summary_csv_path = os.path.join(saving_loc, 'summary_df_3d_coords.csv')
         summary_df = _load_summary_data_for_binding_site(summary_csv_path)
-    else:
-        print(f"Using provided summary dataframe: {len(summary_df):,} rows")
 
-    # Prepare summary data
-    print("\nPreparing summary data...")
+    if 'snapshot' not in summary_df.columns:
+        print("ERROR: summary_df has no 'snapshot' column -- can't build a per-frame volume series")
+        return None
+
     # Extract state and clean PDB ID
+    summary_df = summary_df.copy()
     summary_df['state'] = summary_df['prj'].str.extract(r'^(apo|holo)', expand=False)
     summary_df['clean_id'] = summary_df['prj'].str.replace(r'^(apo|holo)', '', regex=True)
 
-    # Create frame index
-    summary_df['frame'] = summary_df.groupby(['prj', 'rep', 'pocket_number']).cumcount()
-
-    # Drop missing data
+    # A pocket has multiple rows per real MD frame -- one per alpha sphere/dummy atom, all
+    # sharing the same volume (see consecutive_zeros_transiency._per_frame_volumes) -- so this
+    # must dedupe to one row per (pocket, snapshot) before using snapshot as the frame axis.
+    # Using a raw per-group row counter here instead would silently number alpha spheres, not
+    # frames, and make adjacent "frames" jump between unrelated volumes.
+    summary_df = summary_df.drop_duplicates(subset=['ID', 'snapshot'])
     summary_df = summary_df.dropna(subset=['state', 'clean_id', 'interpolated_pock_volume', 'ID'])
 
-    print(f"Valid summary rows: {len(summary_df):,}")
-
-    # Filter for binding site pockets
-    print("\nFiltering for orthosteric pockets...")
-
-    binding_data_list = []
-
-    # Check if binding_local_ids are full IDs (with _i suffix) or local IDs
+    # Filter for binding site pockets. binding_local_ids may be full IDs (with the isovalue
+    # suffix, e.g. 'apo8ITF_1_p10_i3.0') or local IDs (without it, e.g. 'apo8ITF_1_p10').
     sample_id = str(binding_local_ids[0]) if len(binding_local_ids) > 0 else ""
     is_full_id = '_i' in sample_id
 
     if is_full_id:
-        # IDs are full format (e.g., apo8ITF_1_p10_i3.0) - direct match
-        print("ID format: Full IDs (with isovalue)")
         binding_data = summary_df[summary_df['ID'].isin(binding_local_ids)].copy()
     else:
-        # IDs are local format (e.g., apo8ITF_1_p10) - prefix match
-        print("ID format: Local IDs (matching prefix)")
-        for local_id in binding_local_ids:
-            # Match Local Pocket ID to ID column (e.g., apo8ITF_1_p10 matches apo8ITF_1_p10_i3.0)
-            pocket_data = summary_df[summary_df['ID'].str.startswith(str(local_id) + '_i')].copy()
-            if len(pocket_data) > 0:
-                binding_data_list.append(pocket_data)
-
-        if len(binding_data_list) == 0:
+        binding_data_list = [summary_df[summary_df['ID'].str.startswith(str(local_id) + '_i')]
+                             for local_id in binding_local_ids]
+        binding_data_list = [d for d in binding_data_list if len(d) > 0]
+        if not binding_data_list:
             print("ERROR: No orthosteric data found in summary")
             return None
         binding_data = pd.concat(binding_data_list, ignore_index=True)
@@ -2927,49 +2893,36 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
         print("ERROR: No orthosteric data found in summary")
         return None
 
-    print(f"Orthosteric data: {len(binding_data):,} rows")
-    print(f"PDB IDs: {sorted(binding_data['clean_id'].unique())}")
-    print(f"States: {binding_data['state'].unique()}")
+    print(f"Orthosteric binding-site volumes: {len(binding_local_ids)} pockets, "
+         f"{binding_data['clean_id'].nunique()} PDB ID(s), {len(binding_data):,} (pocket, frame) rows")
 
-    # ========================================================================
-    # Calculate median volume per frame across replicates
-    # ========================================================================
-    print("\nCalculating median volume per frame across replicates...")
-    print("Grouping by: clean_id (PDB ID), state (apo/holo), frame")
-
-    # Group by PDB ID, state, and frame
-    # Calculate median across all replicates and pockets
+    # Median binding-site volume at each real MD frame (snapshot), across every replicate/
+    # pocket that contributes to that (PDB ID, state) at that snapshot
     median_volumes = binding_data.groupby(
-        ['clean_id', 'state', 'frame']
+        ['clean_id', 'state', 'snapshot']
     )['interpolated_pock_volume'].median().reset_index()
+    median_volumes.columns = ['clean_id', 'state', 'snapshot', 'median_volume']
 
-    median_volumes.columns = ['clean_id', 'state', 'frame', 'median_volume']
-
-    print(f"Calculated {len(median_volumes):,} median values")
-    print(f"\nSample data:")
+    print(f"Median binding-site volume per (PDB ID, state, snapshot) -- {len(median_volumes):,} rows, "
+         f"first 10 shown:")
     print(median_volumes.head(10))
 
-    # Summary statistics
-    print("\nSummary statistics by PDB ID and state:")
+    print("Median binding-site volume per PDB ID and state, summarized across all snapshots:")
     summary_stats = median_volumes.groupby(['clean_id', 'state'])['median_volume'].agg(
         ['count', 'mean', 'std', 'min', 'max']
     ).round(2)
     print(summary_stats)
 
-    # ========================================================================
     # Create COMBINED violin plot (all PDB IDs)
-    # ========================================================================
     plt.style.use('seaborn-v0_8-whitegrid')
     sns.set_context("paper", font_scale=1.2)
 
-    # Color scheme
-    APO_COLOR = 'lightgrey'
-    HOLO_COLOR = 'darkblue'
+    # Color scheme -- sand / mauve, matching STATE_COLORS
+    APO_COLOR = STATE_COLORS['apo']
+    HOLO_COLOR = STATE_COLORS['holo']
 
     pdb_ids = sorted(median_volumes['clean_id'].unique())
     n_pdbs = len(pdb_ids)
-
-    print(f"PDB IDs to plot: {n_pdbs}")
 
     # Create figure - wide enough for all PDB IDs
     fig, ax = plt.subplots(figsize=(max(16, n_pdbs * 1.5), 8))
@@ -3047,27 +3000,18 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     # Save combined plot
     combined_path = os.path.join(violin_dir, "violin_plot_binding_site_ALL_PDBs.png")
     plt.savefig(combined_path, dpi=300, bbox_inches='tight')
-    print(f"Saved combined plot: {combined_path}")
 
     combined_pdf = os.path.join(violin_dir, "violin_plot_binding_site_ALL_PDBs.pdf")
     plt.savefig(combined_pdf, bbox_inches='tight')
-    print(f"Saved PDF: {combined_pdf}")
+    print(f"Saved combined plot: {os.path.basename(combined_path)} (png, pdf)")
 
     plt.close()
 
-    # ========================================================================
     # Create INDIVIDUAL plots per PDB ID
-    # ========================================================================
     individual_paths = []
 
     if create_individual_plots:
-        print("\n" + "=" * 70)
-        print(f"Creating INDIVIDUAL plots for {n_pdbs} PDB IDs...")
-        print("=" * 70)
-
-        for idx, pdb_id in enumerate(pdb_ids, 1):
-            print(f"\n[{idx}/{n_pdbs}] Creating plot for {pdb_id}...")
-
+        for pdb_id in pdb_ids:
             # Filter data for this PDB ID
             pdb_data = median_volumes[median_volumes['clean_id'] == pdb_id]
 
@@ -3088,17 +3032,14 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
                 labels.append('Apo')
                 colors.append(APO_COLOR)
                 positions.append(0)
-                print(f"Apo: {len(apo_data)} data points")
 
             if len(holo_data) > 0:
                 plot_data.append(holo_data)
                 labels.append('Holo')
                 colors.append(HOLO_COLOR)
                 positions.append(1)
-                print(f"Holo: {len(holo_data)} data points")
 
             if len(plot_data) == 0:
-                print(f"No data for {pdb_id}, skipping...")
                 plt.close()
                 continue
 
@@ -3143,10 +3084,7 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     # ========================================================================
     # Summary
     # ========================================================================
-    print("\n" + "=" * 70)
-    print("✅ COMPLETE!")
-    print("=" * 70)
-    print(f"\nGenerated {1 + len(individual_paths)} plots (PNG + PDF each):")
+    print(f"Generated {1 + len(individual_paths)} plots (PNG + PDF each):")
     print(f"  - 1 combined plot (all PDB IDs)")
     print(f"  - {len(individual_paths)} individual plots")
 

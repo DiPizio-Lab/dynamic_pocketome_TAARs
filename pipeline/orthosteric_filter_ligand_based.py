@@ -7,12 +7,24 @@ renames it to `is_orthosteric` for pocket_analysis_summary.csv and everything
 downstream of that file (run_apo_holo_comparison.py, taar_paper_figures/) --
 see the README for why the name differs between the two.
 
-Definition: per holo PDB, the residues within RESIDUE_DISTANCE_THRESHOLD (5 A) of
-the co-crystallized ligand's centroid define that PDB's orthosteric site. Apo
-structures reuse their holo counterpart's site (both states are superposed into
-one coordinate frame and share residue numbering, and apo has no ligand of its
-own). A pocket is classified as binding-site (orthosteric) if at least
-MIN_RESIDUE_OVERLAP (80%) of its own residues fall inside that site.
+Definition: a pocket is binding-site (orthosteric) if its own centroid (the mean
+x/y/z of all its dummy-atom/alpha-sphere coordinates, across every frame) falls
+within DEFAULT_DISTANCE_THRESHOLD (5 A) of its PDB's co-crystallized ligand
+centroid. This is deliberately a coarse, whole-pocket-vs-whole-ligand comparison
+rather than a residue-level one: a pocket that genuinely envelops the ligand has
+a centroid close to the ligand's by construction. A residue-overlap version of
+this (site = protein residues within 5 A of the ligand centroid, pocket must
+cover >=80% of them) was tried and reverted -- for a small, 9-heavy-atom ligand
+that "site" collapsed to 2-3 residues, so essentially no real pocket could ever
+match it, and every experiment came back with 0 orthosteric pockets.
+
+Apo structures never carry a ligand -- it's stripped out before the MD system is
+built, so extract_ligand_coords() returns None for every apo PDB. An apo pocket
+is therefore scored against its *holo counterpart's* ligand centroid instead.
+That falls out naturally from load_ligand_centroids() only ever reading
+holo_base and keying its result by bare PDB ID (no apo/holo prefix):
+classify_binding_site() strips the same prefix off each pocket's own project id
+before the lookup, so 'apo8ITF' and 'holo8ITF' resolve to the same dict entry.
 """
 
 import os
@@ -21,21 +33,29 @@ import re
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Dict, Optional, List, Set
+from typing import Dict, Optional, List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
 from config import HOLO_BASE_DIR
 
 DEFAULT_HOLO_BASE = HOLO_BASE_DIR
+DEFAULT_DISTANCE_THRESHOLD = 5.0  # Angstrom, pocket-centroid-to-ligand-centroid cutoff
 DEFAULT_LIGAND_RESNAMES = ['LIG']
-RESIDUE_DISTANCE_THRESHOLD = 5.0   # Angstrom, residue-to-ligand-centroid cutoff
-MIN_RESIDUE_OVERLAP = 0.8          # fraction of a pocket's own residues that must fall in the site
 
 
 def extract_ligand_coords(pdb_path: str, resnames: List[str] = DEFAULT_LIGAND_RESNAMES) -> Optional[np.ndarray]:
     """
-    Extract heavy atom coordinates for the ligand from a PDB file.
-    Returns array of shape (n_atoms, 3) or None if not found.
+    Extract heavy-atom coordinates for the ligand from a PDB file.
+
+    Reads both ATOM and HETATM records: the CHARMM-formatted structure.pdb files
+    this pipeline works with record every residue -- ligand, protein, water,
+    ions, lipid alike -- as ATOM, never HETATM, so filtering on record type
+    alone would silently find nothing.
+
+    Returns array of shape (n_atoms, 3), or None if the file has no residue
+    named `resnames` -- always the case for an apo structure, since the ligand
+    is stripped out before the MD system is built (see module docstring for how
+    apo pockets are classified anyway).
     """
     coords = []
 
@@ -63,49 +83,27 @@ def extract_ligand_coords(pdb_path: str, resnames: List[str] = DEFAULT_LIGAND_RE
     return np.array(coords) if coords else None
 
 
-def _protein_residue_atom_coords(pdb_path: str) -> Dict[str, List[np.ndarray]]:
-    """residue_id (str) -> list of that residue's heavy-atom coordinates (ATOM records only,
-    i.e. protein -- ligand/water/ions are HETATM and excluded)."""
-    residues: Dict[str, List[np.ndarray]] = {}
-
-    with open(pdb_path, 'r') as f:
-        for line in f:
-            if not line.startswith('ATOM'):
-                continue
-
-            atom_name = line[12:16].strip()
-            if atom_name.startswith('H') or atom_name.startswith('D'):
-                continue
-
-            resid = line[22:26].strip()
-            try:
-                x = float(line[30:38])
-                y = float(line[38:46])
-                z = float(line[46:54])
-            except ValueError:
-                continue
-
-            residues.setdefault(resid, []).append(np.array([x, y, z]))
-
-    return residues
-
-
-def orthosteric_site_residues(holo_base: str = DEFAULT_HOLO_BASE,
-                              ligand_resnames: List[str] = DEFAULT_LIGAND_RESNAMES,
-                              distance_threshold: float = RESIDUE_DISTANCE_THRESHOLD) -> Dict[str, Set[str]]:
+def load_ligand_centroids(holo_base: str = DEFAULT_HOLO_BASE,
+                          ligand_resnames: List[str] = DEFAULT_LIGAND_RESNAMES) -> Dict[str, np.ndarray]:
     """
-    Per bare PDB ID (no apo/holo prefix, e.g. '8ITF'): the set of residue IDs within
-    distance_threshold Angstrom of the ligand centroid, computed from that PDB's holo
-    structure (the lowest-numbered replicate under holo_base/holo<PDBID>/<rep>/structure.pdb --
-    the ligand pose at frame 0 is effectively the same across replicates of the same
-    crystal structure).
+    Per bare PDB ID (no apo/holo prefix, e.g. '8ITF'): the co-crystallized
+    ligand's centroid, extracted from that PDB's holo structure (the
+    lowest-numbered replicate under holo_base/holo<PDBID>/<rep>/structure.pdb --
+    the ligand pose at frame 0 is effectively the same across replicates of the
+    same crystal structure, so any one of them will do).
+
+    Deliberately only ever reads holo_base: apo structures have no ligand of
+    their own (extract_ligand_coords returns None for them), so
+    classify_binding_site() looks an apo pocket up in this same holo-keyed
+    dict, after stripping its own apo/holo prefix the same way this function
+    strips pdb_dir.name's.
     """
     holo_path = Path(holo_base)
-    site_residues: Dict[str, Set[str]] = {}
+    centroids: Dict[str, np.ndarray] = {}
 
     if not holo_path.exists():
         print(f"WARNING: Holo base directory not found: {holo_base}")
-        return site_residues
+        return centroids
 
     for pdb_dir in holo_path.iterdir():
         if not pdb_dir.is_dir():
@@ -119,49 +117,44 @@ def orthosteric_site_residues(holo_base: str = DEFAULT_HOLO_BASE,
         ligand_coords = extract_ligand_coords(str(pdb_file), ligand_resnames)
         if ligand_coords is None or len(ligand_coords) == 0:
             continue
-        centroid = ligand_coords.mean(axis=0)
-
-        near: Set[str] = set()
-        for resid, atom_coords in _protein_residue_atom_coords(str(pdb_file)).items():
-            distances = np.linalg.norm(np.array(atom_coords) - centroid, axis=1)
-            if distances.min() <= distance_threshold:
-                near.add(resid)
 
         bare_id = re.sub(r'^(apo|holo)', '', pdb_dir.name)
-        site_residues[bare_id] = near
+        centroids[bare_id] = ligand_coords.mean(axis=0)
 
-    return site_residues
-
-
-def normalize_pocket_number(series: pd.Series) -> pd.Series:
-    """Pocket numbers come out of the mdpocket filename parser as strings that may be
-    zero-padded ('02') or embedded in an ID suffix ('_p24'); strip to the bare int so
-    pocket tables merge reliably on (prj, rep, pocket_number)."""
-    return series.astype(str).str.extract(r'(\d+)')[0].astype(int)
+    return centroids
 
 
 def classify_binding_site(pockets_df: pd.DataFrame, holo_base: str = DEFAULT_HOLO_BASE,
-                          distance_threshold: float = RESIDUE_DISTANCE_THRESHOLD,
-                          min_overlap: float = MIN_RESIDUE_OVERLAP,
+                          distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD,
+                          ligand_resnames: List[str] = DEFAULT_LIGAND_RESNAMES,
+                          id_column: str = 'ID', coord_columns: List[str] = ['x', 'y', 'z'],
+                          prj_column: str = 'prj',
                           saving_loc: Optional[str] = None,
                           filename: str = 'pocket_labels_ortho_def.csv') -> pd.DataFrame:
     """
     Classify every pocket in pockets_df as binding-site (orthosteric) or not.
 
+    A pocket is binding-site if its own centroid (the mean of coord_columns
+    across every one of its rows - every frame, every dummy atom/alpha sphere)
+    is within distance_threshold of its PDB's ligand centroid (see
+    load_ligand_centroids; apo pockets resolve to their holo counterpart's).
+
     Parameters
     ----------
     pockets_df : pd.DataFrame
-        One row per residue per pocket, as produced by
-        MetaAnalysis.pock_file_parser()['res_to_pock_df']. Needs 'prj', 'rep',
-        'pocket_number', 'residue_id' and, if present, 'residue_name' columns.
+        One row per (pocket, frame, alpha sphere) -- e.g.
+        pipeline/pocket_dataframes.py's `all_pockets` right after
+        _add_identity_columns(), before it's trimmed down to KEEP_COLS. Needs
+        id_column, prj_column and coord_columns; 'rep' and 'pocket_number', if
+        present, are carried through into the result for merging back.
     holo_base : str
-        Path to the raw holo input tree (PDB+rep layout), used to derive each PDB's
-        orthosteric site (see orthosteric_site_residues).
+        Path to the raw holo input tree (PDB+rep layout), used to derive each
+        PDB's ligand centroid (see load_ligand_centroids).
     distance_threshold : float
-        Residue-to-ligand-centroid cutoff (Angstrom) that defines a PDB's site.
-    min_overlap : float
-        Minimum fraction of a pocket's own residues that must fall in its PDB's
-        site for the pocket to be classified as binding-site.
+        Pocket-centroid-to-ligand-centroid cutoff (Angstrom).
+    id_column, coord_columns, prj_column : str / list[str]
+        Column names for the per-pocket identifier, its x/y/z coordinates, and
+        the project id (e.g. 'apo8ITF') used to look up the right ligand.
     saving_loc : str, optional
         If given, also writes the result to {saving_loc}/{filename} (Stage 3's
         fallback source for is_binding_site when it's missing from
@@ -170,33 +163,34 @@ def classify_binding_site(pockets_df: pd.DataFrame, holo_base: str = DEFAULT_HOL
     Returns
     -------
     pd.DataFrame
-        One row per (pocket_number, prj, rep): 'pocket_number', 'prj', 'rep',
-        'isovalue', 'total_residues', 'residues', 'overlap_ratio', 'is_binding_site'.
+        One row per pocket ID: id_column, prj_column, 'rep'/'pocket_number' (if
+        present in pockets_df), 'distance_to_ligand_centroid', 'is_binding_site'.
     """
-    site_residues = orthosteric_site_residues(holo_base, distance_threshold=distance_threshold)
+    ligand_centroids = load_ligand_centroids(holo_base, ligand_resnames=ligand_resnames)
+
+    extra_cols = [c for c in ('rep', 'pocket_number') if c in pockets_df.columns]
+    pocket_centroids = pockets_df.groupby(id_column)[coord_columns].mean()
+    pocket_meta = pockets_df.groupby(id_column)[[prj_column] + extra_cols].first()
 
     rows = []
-    for (pock_no, prj, rep), df_pocket in pockets_df.groupby(['pocket_number', 'prj', 'rep']):
-        df_pocket = df_pocket.reset_index(drop=True)
-        res_ids = df_pocket['residue_id'].astype(str).tolist()
-        if 'residue_name' in df_pocket.columns:
-            unique_pairs = (df_pocket[['residue_name', 'residue_id']]
-                            .drop_duplicates().sort_values('residue_id'))
-            aa_list = [f"{row.residue_name}{int(row.residue_id)}" for _, row in unique_pairs.iterrows()]
-        else:
-            aa_list = sorted(set(res_ids), key=lambda x: int(x))
-
+    for pocket_id, centroid in pocket_centroids.iterrows():
+        prj = pocket_meta.loc[pocket_id, prj_column]
         bare_id = re.sub(r'^(apo|holo)', '', str(prj))
-        site = site_residues.get(bare_id, set())
+        ligand_centroid = ligand_centroids.get(bare_id)
 
-        pocket_residues = set(res_ids)
-        overlap_ratio = len(pocket_residues & site) / len(pocket_residues) if pocket_residues else 0.0
-        is_binding = overlap_ratio >= min_overlap
+        if ligand_centroid is None:
+            distance = np.nan
+            is_binding = False
+        else:
+            distance = float(np.linalg.norm(centroid.values - ligand_centroid))
+            is_binding = distance <= distance_threshold
 
-        isovalue = df_pocket['isovalue'].iloc[0] if 'isovalue' in df_pocket.columns else None
-        rows.append({'pocket_number': pock_no, 'prj': prj, 'rep': rep, 'isovalue': isovalue,
-                     'total_residues': len(pocket_residues), 'residues': aa_list,
-                     'overlap_ratio': round(overlap_ratio, 2), 'is_binding_site': is_binding})
+        row = {id_column: pocket_id, prj_column: prj,
+              'distance_to_ligand_centroid': round(distance, 2) if not np.isnan(distance) else np.nan,
+              'is_binding_site': is_binding}
+        for c in extra_cols:
+            row[c] = pocket_meta.loc[pocket_id, c]
+        rows.append(row)
 
     result_df = pd.DataFrame(rows)
 

@@ -16,6 +16,7 @@ Originally developed for Clarissa Rienäcker's Master's Thesis, analysing TAAR (
 OR) MD trajectories with MDAnalysis and fpocket/MDpocket.
 """
 
+import argparse
 import os
 import sys
 import time
@@ -28,6 +29,7 @@ from scripts import basic_analysis
 from scripts import pocket_analysis as pocket
 from scripts import gene_selections as gene_sel
 from scripts import logging as logger
+from scripts import run_summary
 
 warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -35,11 +37,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 VERBOSE = True
 SHOW_PLOTS = False  # True: plots are displayed and saved; False: saved only
 
-# Simulation timing: frames are written every traj_period integration steps of
-# time_step fs, then strided by `stride` in make_selection_n_save() below --
-# 25000 * 4fs = 0.1 ns/raw frame, * stride 10 = 1 ns/frame downstream (matches
-# consecutive_zeros_transiency.NS_PER_FRAME).
-TRJ_PERIOD_STEP_STRIDE = {'traj_period': 25000, 'time_step': 4, 'stride': 10}
+# Simulation timing: input/ is expected to already be at 1 frame = 1 ns (see
+# step0_prepare_clean_input.py, which normalizes raw simulation output -- apo and holo were
+# written at different raw frame frequencies -- into that shape before it ever reaches this
+# pipeline). `stride` is kept here as a knob for anyone whose input isn't pre-normalized, but
+# stays 1 for this dataset: re-striding already-1-ns/frame input would just throw frames away.
+TRJ_PERIOD_STEP_STRIDE = {'traj_period': 25000, 'time_step': 4, 'stride': 1}
 STRIDE = TRJ_PERIOD_STEP_STRIDE['stride']
 
 # Binding site & ICL3 residue numbers per gene (NOT the orthosteric/is_binding_site pocket
@@ -48,9 +51,19 @@ STRIDE = TRJ_PERIOD_STEP_STRIDE['stride']
 # reference_data/ICL3_definition.txt by scripts/gene_selections.py.
 
 
-def get_project_list():
+def get_project_list(pdb_ids=None, exclude_pdb_ids=None):
     """[<APO_STRUCTURES_DIR or HOLO_STRUCTURES_DIR>/<state><PDBID>/<rep>, ...] for every
-    replicate under both input structure trees."""
+    replicate under both input structure trees, covering both states for whichever PDB IDs are
+    included (bare IDs, e.g. '8ITF', not 'apo8ITF').
+
+    pdb_ids: if given, only these PDB IDs (both apo and holo) -- e.g. a small reproducibility-
+    check subset that should be prioritized ahead of the rest.
+    exclude_pdb_ids: if given, every PDB ID EXCEPT these -- the complement of a pdb_ids run, for
+    submitting the "everything else" work as a separate, non-overlapping job so the two never
+    race on the same replicate's output.
+    Mutually exclusive -- pass at most one."""
+    if pdb_ids is not None and exclude_pdb_ids is not None:
+        raise ValueError("pass at most one of pdb_ids / exclude_pdb_ids, not both")
     project_ls = []
     for structures_dir in (conf.APO_STRUCTURES_DIR, conf.HOLO_STRUCTURES_DIR):
         if not os.path.isdir(structures_dir):
@@ -58,6 +71,11 @@ def get_project_list():
         for folder in sorted(os.listdir(structures_dir)):
             folder_path = os.path.join(structures_dir, folder)
             if not os.path.isdir(folder_path):
+                continue
+            _, folder_pdb_id = run_summary.parse_experiment(folder)
+            if pdb_ids is not None and folder_pdb_id not in pdb_ids:
+                continue
+            if exclude_pdb_ids is not None and folder_pdb_id in exclude_pdb_ids:
                 continue
             for rep in sorted(os.listdir(folder_path)):
                 rep_path = os.path.join(folder_path, rep)
@@ -82,10 +100,20 @@ def setup_results_folder():
                     os.makedirs(os.path.join(results_dir, folder, rep), exist_ok=True)
 
 
-def run_analyses():
+def run_analyses(shard_index=0, num_shards=1, pdb_ids=None, exclude_pdb_ids=None):
     """Wrapper calling all per-replicate analysis steps; files are saved and then
-    not overwritten if they already exist."""
-    project_ls = get_project_list()
+    not overwritten if they already exist.
+
+    shard_index/num_shards split project_ls round-robin (project_ls[shard_index::num_shards])
+    so this can be run as several concurrent processes -- e.g. one per SLURM node -- each
+    covering a disjoint set of replicates with no coordination needed between them (every
+    replicate writes to its own output subtree, see setup_results_folder). Defaults (0, 1)
+    run every replicate, unchanged from before sharding existed.
+
+    pdb_ids/exclude_pdb_ids: see get_project_list() -- scope this run to a PDB ID subset (or its
+    complement) instead of everything."""
+    project_ls = get_project_list(pdb_ids=pdb_ids, exclude_pdb_ids=exclude_pdb_ids)[shard_index::num_shards]
+    print(f'Shard {shard_index}/{num_shards}: {len(project_ls)} replicate(s) to process')
 
     for proj_rep in project_ls:
         curr_rep = os.path.basename(proj_rep)
@@ -93,40 +121,77 @@ def run_analyses():
         curr_traj = os.path.join(proj_rep, 'traj_wrapped.xtc')
         curr_topol = os.path.join(proj_rep, 'structure.pdb')
         results_dir = conf.results_dir_for(folder_name)
+        state, pdb_id = run_summary.parse_experiment(folder_name)
 
-        # binding site & ICL3 residues differ per gene, so the group selection is built per project
-        gene = gene_sel.gene_for_project(folder_name)
-        group_sel = gene_sel.group_selection_for(gene)
+        try:
+            # binding site & ICL3 residues differ per gene, so the group selection is built per project
+            gene = gene_sel.gene_for_project(folder_name)
+            group_sel = gene_sel.group_selection_for(gene)
 
-        # I: pre-processing -- dry protein, then align to the reference topology
-        preprocess_obj = prepro.PreProcess(curr_topol, curr_traj, folder_name, curr_rep, verbose=VERBOSE)
-        preprocess_obj.make_selection_n_save(stride=STRIDE)  # if selection None selects 'protein'
-        # Note: dry protein is saved, align to ref takes path to saving loc
-        #  (otherwise issues with the number of frames: only 1st frame is returned as AtomGroup)
-        universe_path = os.path.join(results_dir, folder_name, curr_rep, 'dry_prot.xtc')
-        dry_top_path = os.path.join(results_dir, folder_name, curr_rep, 'dry_prot.pdb')
-        preprocess_obj.align_to_reference(reference=curr_topol, universe=(dry_top_path, universe_path))
+            # I: pre-processing -- dry protein, then align to the reference topology
+            with run_summary.stage(state, pdb_id, curr_rep, 'preprocessing'):
+                preprocess_obj = prepro.PreProcess(curr_topol, curr_traj, folder_name, curr_rep, verbose=VERBOSE)
+                preprocess_obj.make_selection_n_save(stride=STRIDE)  # if selection None selects 'protein'
+                # Note: dry protein is saved, align to ref takes path to saving loc
+                #  (otherwise issues with the number of frames: only 1st frame is returned as AtomGroup)
+                universe_path = os.path.join(results_dir, folder_name, curr_rep, 'dry_prot.xtc')
+                dry_top_path = os.path.join(results_dir, folder_name, curr_rep, 'dry_prot.pdb')
+                preprocess_obj.align_to_reference(reference=curr_topol, universe=(dry_top_path, universe_path))
 
-        # II: RMSD / RMSF
-        basic_analysis_obj = basic_analysis.BasicAnalysis(curr_topol, curr_traj, curr_proj=folder_name,
-                                                          curr_rep=curr_rep, verbose=VERBOSE, show_plots=SHOW_PLOTS)
-        basic_analysis_obj.calc_rmsd(trj_period_step_stride=TRJ_PERIOD_STEP_STRIDE,
-                                     selection='protein and name CA', group_selection=group_sel)
-        basic_analysis_obj.calc_rmsf()
+            # II: RMSD / RMSF
+            with run_summary.stage(state, pdb_id, curr_rep, 'rmsd_calculation'):
+                basic_analysis_obj = basic_analysis.BasicAnalysis(curr_topol, curr_traj, curr_proj=folder_name,
+                                                                  curr_rep=curr_rep, verbose=VERBOSE, show_plots=SHOW_PLOTS)
+                basic_analysis_obj.calc_rmsd(trj_period_step_stride=TRJ_PERIOD_STEP_STRIDE,
+                                             selection='protein and name CA', group_selection=group_sel,
+                                             icl3_free_selection=gene_sel.ca_without_icl3_selection_for(gene))
+                basic_analysis_obj.calc_rmsf()
 
-        # III: pocket search (MDpocket) -- runs on the aligned, dry-protein output from step I,
-        # not the raw input (which still has solvent/membrane)
-        aligned_topol, aligned_traj = conf.aligned_paths_for(folder_name, curr_rep, 'xtc')
-        pocket_obj = pocket.PocketAnalysis(aligned_topol, aligned_traj, curr_proj=folder_name, curr_rep=curr_rep,
-                                           verbose=VERBOSE, pocket_dir='pockets')
-        pocket_obj.pocket_search()
+            # III: pocket search (MDpocket) -- runs on the aligned, dry-protein output from step I,
+            # not the raw input (which still has solvent/membrane). Records its own
+            # pocket_detection/pocket_separation/pocket_characterisation checkpoints internally
+            # (see PocketAnalysis.pocket_search), since those are three distinct sub-stages.
+            aligned_topol, aligned_traj = conf.aligned_paths_for(folder_name, curr_rep, 'xtc')
+            pocket_obj = pocket.PocketAnalysis(aligned_topol, aligned_traj, curr_proj=folder_name, curr_rep=curr_rep,
+                                               verbose=VERBOSE, pocket_dir=conf.POCKETS_DIRNAME)
+            pocket_obj.pocket_search()
+        except Exception as exc:
+            # One experiment's failure must not take down the rest of this shard's replicate
+            # list -- the failing stage already recorded its own ERROR checkpoint (see
+            # run_summary.stage), so here we just log and move on to the next replicate.
+            message = run_summary.format_exception_message(exc)
+            print(f'ERROR: {folder_name}/{curr_rep} failed, skipping to next replicate: {message}')
+            logger.log(f'ERROR: {folder_name}/{curr_rep} failed, skipping to next replicate: {message}')
+            continue
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Step 1: per-replicate preprocessing, RMSD/RMSF "
+                                                  "and pocket search.")
+    parser.add_argument('--num-shards', type=int, default=1,
+                         help="Split the replicate list into this many shards, e.g. one per "
+                              "SLURM node (default: 1, i.e. no sharding -- run everything)")
+    parser.add_argument('--shard-index', type=int, default=0,
+                         help="0-indexed shard this process should run (default: 0)")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument('--pdb-ids', nargs='+', default=None,
+                        help="Only these PDB IDs (both apo and holo), e.g. --pdb-ids 8ITF 8JLJ")
+    scope.add_argument('--exclude-pdb-ids', nargs='+', default=None,
+                        help="Every PDB ID except these -- the complement of a --pdb-ids run, "
+                             "for a non-overlapping companion job covering the rest")
+    args = parser.parse_args()
+    if not (0 <= args.shard_index < args.num_shards):
+        parser.error(f"--shard-index must be in [0, {args.num_shards}), got {args.shard_index}")
+    return args
 
 
 def main():
+    args = parse_args()
     t0 = time.time()
     logger.log("Welcome to MMLab's custom MD Analysis Pipeline! Here is what happened while you had a coffee: \n \n ")
     setup_results_folder()
-    run_analyses()
+    run_analyses(shard_index=args.shard_index, num_shards=args.num_shards,
+                 pdb_ids=args.pdb_ids, exclude_pdb_ids=args.exclude_pdb_ids)
     t1 = time.time()
     t_min = (t1 - t0) / 60
     t_hr = t_min / 60

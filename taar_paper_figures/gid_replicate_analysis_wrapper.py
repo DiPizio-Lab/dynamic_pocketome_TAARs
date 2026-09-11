@@ -50,6 +50,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "pipeline"))
 from config import OUTPUT_DIR, META_ANALYSIS_ROOT, META_ANALYSIS_DIR
 import global_id_and_comparison as gid
 import pocket_io
+from scripts import run_summary
 import numpy as np
 import pandas as pd
 
@@ -600,4 +601,5 @@ def replicate_analysis():
 
 
 if __name__ == "__main__":
-    replicate_analysis()
+    with run_summary.stage(*run_summary.AGGREGATE_KEY, 'optional_analyses'):
+        replicate_analysis()

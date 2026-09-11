@@ -1,11 +1,8 @@
-# Data -- published separately, never committed here.
 /input/*
 !/input/.gitkeep
 /output/*
 !/output/.gitkeep
 
-# Common local data/result dir names, in case a run script is pointed at the
-# repo root directly instead of input//output/.
 apo_structures/
 holo_structures/
 meta_analysis/
@@ -15,28 +12,40 @@ global_ID_apo_only/
 global_ID_holo_only/
 global_ID_both_states/
 apo_holo_global_id_mapping/
+blender
+blender_global_id_prep.py
+slurm
+taar_paper_figures/calibrate_pocket_radii.py
 
-# Python
 __pycache__/
 *.pyc
 *.egg-info/
 
-# Generated binaries / renders -- regenerate via the pipeline, don't commit.
 *.blend
 *.blend1
 *.MNSession
 *.png
+!/graphical_abstract_20260908.png
 *.pse
 *.pdb
 
-# IDE / tool config
 .idea/
 .claude/
 .vscode/
 
-# Jupyter checkpoints
 .ipynb_checkpoints/
 
-# Logs
 *.log
-nohup.out
+*nohup.out
+/logs/
+/0_zenodo_MD/
+taar_paper_figures/logs/
+
+# Internal tooling / raw-data handling, not part of the published pipeline -- both read
+# from external, non-public source trees outside this repo.
+/step0_prepare_clean_input.py
+/pipeline/build_zenodo_export.py
+
+# Generated provenance report (real absolute source paths per replicate) -- not curated
+# reference data despite living under reference_data/, and regenerable via step0 --detect-only.
+/reference_data/input_data_settings_summary*.csv

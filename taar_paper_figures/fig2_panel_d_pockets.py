@@ -8,9 +8,16 @@ small one, so the outlines carry the size comparison and the render carries the 
 Encoding:  colour = state (apo sand, holo slate)   dashed = apo, solid = holo
            full-strength colour = large pocket, lightened = small pocket
 
-Inputs (both produced from the SAME camera - see blender/export_pocket_coords.py):
+Inputs (both produced from the SAME camera by the Blender scripts -- not included in this
+repo, see paper_figures_README.md):
     pocket_camera_coords.npz   {object_name: (N, 2) pixel coords} + __res__
     <render>.png               ideally the no-background (RGBA) export
+
+Both are expected under BLENDER_DIR (default: blender_renders/ next to this file) -- drop
+them there, or point BLENDER_DIR/NPZ/RENDER at wherever you rendered them. Without them,
+load_coords() raises a clear error naming exactly what's missing; load_render() degrades
+quietly (panel D just renders without the image half) since a render is a nice-to-have,
+not something silhouette tracing depends on.
 
 Pocket styles are DERIVED from the object names, so reselecting the representative
 pockets needs no edits here. The backbone is excluded by name.
@@ -25,7 +32,10 @@ from skimage import measure
 import taar_style as ts
 
 # ---------------------------------------------------------------- constants
-BLENDER_DIR = "/mnt/cpm_crienaecker/L_rienaecker/visualizations/Blender_Visualizations/apo_holo_BS_sizes"
+# Not shipped with this repo -- see paper_figures_README.md for how these two files are
+# produced (Blender scripts, not included here) and drop them here, or point this
+# elsewhere entirely.
+BLENDER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blender_renders")
 NPZ = os.path.join(BLENDER_DIR, "pocket_camera_coords.npz")
 # prefer the transparent export; the grey-background one is autocropped as a fallback
 RENDER = os.path.join(BLENDER_DIR, "blender_apo_holo_smallest_largest_pockets_nobg.png")
@@ -106,6 +116,12 @@ def load_coords(npz=None):
     Keys are the blender object names, so nothing needs renaming when the pocket
     selection changes; anything failing pocket_style (the backbone) is dropped."""
     npz = npz or NPZ                       # resolved at call time so setting NPZ works
+    if not os.path.exists(npz):
+        raise FileNotFoundError(
+            f"{npz} not found -- panel D needs pocket_camera_coords.npz, produced by the "
+            "Blender export script (not included in this repo, see paper_figures_README.md's "
+            f"Blender note). Render it separately and place it at {npz} (or point NPZ/BLENDER_DIR "
+            "at wherever you rendered it).")
     data = np.load(npz)
     coords = {key: np.asarray(data[key])[:, :2]
               for key in data.files if key != "__res__" and pocket_style(key)}

@@ -97,8 +97,8 @@ class BasicAnalysis:
         plt.close(fig)
 
     def calc_rmsd(self, trj_period_step_stride, topology=None, trajectory=None, selection='protein and name CA',
-                  group_selection=None, weights=None, verbose=False, reference=(None, None), saving_ext='',
-                  saving_loc=None):
+                  group_selection=None, icl3_free_selection=None, weights=None, verbose=False,
+                  reference=(None, None), saving_ext='', saving_loc=None):
         """Calculate the Root Mean Square Deviation (RMSD) of a molecular dynamics (MD) simulation trajectory.
 
         This function computes the RMSD of a universe over all frames provided.
@@ -123,7 +123,16 @@ class BasicAnalysis:
             An atom selection string used to specify which atoms to include in the RMSD calculation. The default
             is 'protein and name CA', which selects the carbon atoms of a protein.
         group_selection: dict, optional
-            keys should be the description of the selection, values is a list of CHARMM-like selection language
+            keys should be the description of the selection, values is a list of CHARMM-like selection language.
+            Each is reported off the SAME superposition fit as `selection` (MDAnalysis groupselections
+            semantics) -- not independently fit.
+        icl3_free_selection : str, optional
+            An atom selection (e.g. CA without ICL3) computed as its OWN standalone, self-referenced RMSD --
+            fit (superposed) and reported using only this selection, against frame 0 of the same
+            (already pre-aligned) universe -- rather than as a groupselection off `selection`'s fit. Use this
+            for metrics where including a flexible region (ICL3) in the fit would distort the reported
+            deviation of the rest of the selection. Saved as its own 'RMSD of CA without ICL3 in
+            Angström' column alongside `selection` and `group_selection`'s columns.
         for weights please refer to the documentation of MD analysis
 
         verbose : bool, optional
@@ -203,6 +212,16 @@ class BasicAnalysis:
                             superposition=True).run()
 
         df_rmsd = pd.DataFrame(rmsd.rmsd, columns=col_names)
+
+        if icl3_free_selection is not None:
+            # Standalone self-fit: superpose and report using ONLY the ICL3-free selection,
+            # against frame 0 of the SAME (already pre-aligned) universe -- deliberately NOT a
+            # groupselection off the `selection` fit above, so ICL3's flexibility never
+            # contaminates this metric's alignment. See BasicAnalysis.calc_rmsd docstring.
+            icl3_rmsd = rms.RMSD(univ, univ, select=icl3_free_selection, ref_frame=0,
+                                 verbose=self.verbose).run()
+            df_rmsd['RMSD of CA without ICL3 in Angström'] = icl3_rmsd.rmsd[:, 2]
+
         number_of_frames = len(univ.trajectory)
         frame_idx = np.arange(0, number_of_frames)
         time_ns = ((frame_idx + 1) * trj_period_step_stride['traj_period'] * trj_period_step_stride['time_step']

@@ -19,8 +19,7 @@ python paper_plots.py
 | **2** | Orthosteric site | How big is the binding site, and how does the ligand change it? |
 | **3** | Allosteric pocketome | Does ligand binding change the *number* and *size* of distal pockets? |
 
-Figures 2 and 3 differ by exactly one filter: `is_orthosteric` True vs False. That is
-the argument of the paper made visible.
+Figures 2 and 3 differ by exactly one filter: `is_orthosteric` True vs False. 
 
 ---
 
@@ -34,7 +33,7 @@ the argument of the paper made visible.
 ### Shared modules
 | File | Role |
 |---|---|
-| `taar_style.py` | **Single source of truth for the look.** Palette, gene map loader, row order, gene labels, diverging Δ bars, panel letters. Every figure imports this. |
+| `taar_style.py` | Palette, gene map loader, row order, gene labels, diverging Δ bars, panel letters. Every figure imports this. |
 | `pocketome_metrics.py` | Apo-vs-holo comparison maths. No plotting. |
 
 ### Figure builders
@@ -45,11 +44,8 @@ the argument of the paper made visible.
 | `fig2_panel_d_pockets.py` | Figure 2 panel D — renders + silhouette trace (also standalone) |
 | `fig3_pocketome.py` | Figure 3 — allosteric pocketome |
 
-### Blender
-| File | Role |
-|---|---|
-| `blender/export_pocket_coords.py` | Projects pocket surface vertices through the current camera -> `pocket_camera_coords.npz` + `camera_pose.json`. **Re-run after any camera move.** Run inside Blender. |
-| `blender/set_render_background.py` | Render/background settings only: transparent film, RGBA output, `Standard` view transform, Cycles transparent bounces. Materials untouched unless `FIX_MATERIALS = True`. Run inside Blender. |
+The Blender scripts that produce panel D's render and camera export are not included in this repo. 
+The process on how to get to the exact visualisations of the paper is not described or shipped here.
 
 ---
 
@@ -60,17 +56,17 @@ package location (`Path(__file__).parent.parent`), so no path editing is needed.
 the package elsewhere, set the `TAAR_ROOT` environment variable or hardcode `ROOT` in
 `taar_style.py`.
 
-Remaining paths are constants at the top of each module — edit there, nowhere else.
+Remaining paths are constants at the top of each module.
 
 | Input | Used by | Notes |
 |---|---|---|
-| `hard_coded_gene_dict.txt` | `taar_style.py` | PDB ID → gene. Hand-curated; the single source of truth for row order. |
+| `hard_coded_gene_dict.txt` | `taar_style.py` | PDB ID → gene. Hand-curated |
 | `meta_analysis/across_genes/pocket_summary.csv`/`.parquet` | `fig3_pocketome.py` | One row per pocket. Needs `median_pock_volume_open`, `volume_category`, `transient`, `is_orthosteric`. |
 | `meta_analysis/across_genes/orthosteric_perframe_volumes.csv` | `fig2_binding_site.py` | Per-frame orthosteric volumes. ID format `apo8ITF_2_p19_i3`. |
 | RMSD median CSV | `fig1_rmsd_heatmaps.py` | As configured inside that script. |
 | `binding_site_8JLR_hTAAR1_{side,top}view.png` | `fig2_binding_site.py` | Panel C. Autocropped on load. |
-| `pocket_camera_coords.npz` | `fig2_panel_d_pockets.py` | Camera-projected pocket vertices, written by `export_pocket_coords.py`. Keys are the blender object names; styles are derived from them, so reselecting pockets needs no code edits. |
-| `blender_apo_holo_smallest_largest_pockets_nobg.png` | `fig2_panel_d_pockets.py` | Panel D render. The RGBA (no-background) export is preferred and composited onto white; an opaque render is autocropped instead. |
+| `pocket_camera_coords.npz` | `fig2_panel_d_pockets.py` | Camera-projected pocket vertices, written by the (excluded) Blender export script -- see Panel D workflow below. Keys are the blender object names; styles are derived from them, so reselecting pockets needs no code edits. |
+| `blender_apo_holo_smallest_largest_pockets_nobg.png` | `fig2_panel_d_pockets.py` | Panel D render. The RGBA (no-background) export is preferred and composited onto white; an opaque render is autocropped instead. Optional -- `load_render()` degrades quietly (panel D just omits the render half) if missing. |
 
 **Upstream, not in this package:** `pipeline/pocket_dataframes.py` builds `pocket_summary`.
 It derives `volume_category` from the per-pocket **trajectory median** volume, not the
@@ -90,7 +86,7 @@ figure3_allosteric_pocketome.png
 panel_d_pocket_silhouettes.png
 ```
 
-Both figures fit the ACS single-page limit (7.0 × 9.167 in).
+
 
 ---
 
@@ -98,13 +94,13 @@ Both figures fit the ACS single-page limit (7.0 × 9.167 in).
 
 One channel per variable. Never reuse a channel.
 
-| Variable | Channel | Values |
-|---|---|---|
-| Gene | **Position + label**, black text | No colour spent |
-| State | **Colour** | apo `#A98A6A` sand · holo `#3D405B` slate |
-| Volume (continuous) | **viridis** | RMSD and pocket volume |
-| Size category | **viridis samples** | 0.12 / 0.40 / 0.68 / 0.92 |
-| Transiency | **Texture** | stable solid · transient hatched |
+| Variable | Channel | Values                                    |
+|---|---|-------------------------------------------|
+| Gene | **Position + label**, black text | No colour spent                           |
+| State | **Colour** | apo `#D9B98B` sand · holo `#9B5560` mauve |
+| Volume (continuous) | **viridis** | RMSD and pocket volume                    |
+| Size category | **viridis samples** | 0.12 / 0.40 / 0.68 / 0.92                 |
+| Transiency | **Texture** | stable solid · transient hatched          |
 
 The Blender materials use the same state colours, so the renders and the plots agree.
 
@@ -156,24 +152,6 @@ PANELS = {"size": True, "stability": False, "delta_count": True, "delta_class": 
 
 ---
 
-## Blender renders
-
-`blender/set_render_background.py` changes **render settings only** — it does not touch
-your materials. Two settings cause the "white background renders grey-ish" problem:
-
-- **`film_transparent = True`** plus `color_mode = "RGBA"` — renders with no background at
-  all, so matplotlib composites onto true white. Without `RGBA` the alpha is discarded.
-- **`view_transform = "Standard"`** — Blender 4.x defaults to **AgX**, a filmic tone map
-  that pulls pure white down to grey and desaturates. This is the usual culprit.
-
-It also raises Cycles transparent bounces to 64, which matters when pocket surfaces are
-stacked (a small pocket enclosed by a large one is exactly that case).
-
-`FIX_MATERIALS = True` additionally rebuilds the pocket materials from the paper palette.
-Leave it `False` unless you want that.
-
----
-
 ## Transiency
 
 `true_transient` as stored in `pocket_analysis_summary.csv` is
@@ -193,20 +171,18 @@ Both columns are already in the summary table, so no pipeline rerun is needed. S
 
 ## Panel D workflow
 
-The render and the silhouettes must come from the **same camera**, so the export and the
-render are always done together:
+The render and the silhouettes must come from the **same camera**. Steps 2 and 4 need the
+Blender scripts, which are not included in this repo:
 
 1. Frame the camera in Blender.
-2. Run `blender/set_render_background.py` (transparent film, RGBA, `Standard` view
-   transform) — materials untouched.
+2. Set transparent film, RGBA output, `Standard` view transform.
 3. Render → save as `*_nobg.png`.
-4. Run `blender/export_pocket_coords.py` → writes `pocket_camera_coords.npz` and
-   `camera_pose.json` next to the `.blend`.
-5. `python -c "import fig2_panel_d_pockets as d; d.panel_d()"` to check panel D alone,
+4. Export pocket surface vertices through the camera → `pocket_camera_coords.npz`
+   (+ `camera_pose.json`, to reproduce the framing later).
+5. Place both files under `fig2_panel_d_pockets.BLENDER_DIR` (default:
+   `blender_renders/` next to that script), then
+   `python -c "import fig2_panel_d_pockets as d; d.panel_d()"` to check panel D alone,
    or `fig2.figure2()` for the whole figure.
 
 Steps 3 and 4 must use the same camera — if the camera moves, redo both. Material or
 colour changes do **not** require a re-export; only camera moves and geometry changes do.
-
-`camera_pose.json` records the pose so the framing can be reproduced later
-(`export_pocket_coords.restore_camera_pose()`).

@@ -1,19 +1,21 @@
 # taar-pocketome
 
+![version](https://img.shields.io/badge/version-v1.0.0-blue)
+![license](https://img.shields.io/badge/license-GPL--3.0-blue)
+![python](https://img.shields.io/badge/python-3.12-blue)
+
+![Graphical abstract](graphical_abstract_20260908.png)
+
 Pipeline for comparative pocket (pocketome) analysis of TAAR GPCR structures in
-apo and holo states, extended with a **global pocket ID** scheme that makes
+apo and holo states, extended with a global pocket ID scheme that makes
 pockets comparable across MD replicates and across the apo/holo split.
 
 Data (MD trajectories, raw pocket-search output, generated figures) is
 published separately: **TODO — link to data repository / DOI**. This repo is
-code only.
+code only. Check out our publication at **# TODO: add paper link** for a more detailed explanation. 
 
-The pipeline has two required steps, plus an optional one-time migration and
-an optional figures step:
+The pipeline has two required steps, plus an optional figures step:
 
-0. **Step 0** *(optional, dataset-specific)* — normalize raw simulation
-   output from wherever it was written into the uniform `input/` layout the
-   pipeline assumes → `step0_prepare_clean_input.py`.
 1. **Step 1** — turn each wrapped MD trajectory into per-experiment analysis
    results (RMSD/RMSF, pocket search) → `pipeline/analysis_pipeline.py`.
 2. **Step 2** — parse and characterise every pocket (2.1), then assign
@@ -28,30 +30,72 @@ an optional figures step:
 are documented, end-to-end walkthroughs of Steps 1 and 2 — the entry point for
 anyone new to the codebase.
 
+### Tracking progress: `logs/pipeline_summary.csv`
+
+Every stage above (per-experiment: preprocessing, RMSD calculation, pocket
+detection, pocket separation, pocket characterisation — plus the dataset-wide
+meta-analysis, global-ID and optional-analyses stages) checkpoints itself into
+`logs/pipeline_summary.csv` as it runs — `RUNNING` when a stage starts, then
+`OK` or `ERROR: <message>` when it ends (see `scripts/run_summary.py`). One
+row per (state, PDB ID, replicate) for the per-experiment stages; the
+dataset-wide stages share one `ALL/ALL/ALL` row, since Step 2/3 run once over
+every experiment together rather than per replicate. A cell stuck on
+`RUNNING` after a job has ended means that process was killed mid-stage
+(OOM, walltime, node failure, ...).
+
+To (re)build this CSV from whatever result files already exist on disk —
+e.g. after a run that predates this checkpoint file, or to sanity-check it
+against ground truth — run `python pipeline/build_pipeline_summary.py`
+(read-only; each checkpoint is timestamped with the underlying result file's
+own mtime, so a stale stage shows its true date rather than looking freshly
+verified).
+
 ---
 
 ## Setup
 
 ```bash
 conda env create -f environment.yml
-conda activate taar-pocketome
+conda activate pocket_env
 ```
+
+This includes `fpocket` (conda-forge), which provides the `mdpocket` binary
+`scripts/pocket_analysis.py` shells out to for pocket detection -- despite the
+name, `mdpocket`/`dpocket`/`tpocket` all ship together with the `fpocket`
+package, same upstream build (https://github.com/Discngine/fpocket).
 
 Tools used by parts of the pipeline but not pip/conda-installable, not bundled
 here:
 
-| Tool | Used by | Install |
-|---|---|--|
+| Tool | Used by                                                                                                         | Install |
+|---|-----------------------------------------------------------------------------------------------------------------|--|
 | **atclus** | `scripts/pocket_analysis.py` (pocket clustering); Fortran source + build artifacts vendored at `scripts/atclus/` | https://github.com/aachen1995/atclus-4 |
-| **PyMOL** | opening the `.pml` scenes written by `taar_paper_figures/pymol_ambiguous_pockets.py` | https://pymol.org/ |
-| **Blender + Molecular Nodes** | rendering the pocket figures from the PDBs written by `taar_paper_figures/blender_global_id_prep.py`, and the panel-D renders in `taar_paper_figures/blender/` | https://molecularnodes.org/ |
+| **Blender + Molecular Nodes** | rendering the pocket figures used in some paper images; not included in this repo                               | https://molecularnodes.org/ |
+
+### Compiling ATClus on a new machine
+
+`scripts/atclus/atclus` is checked in as a pre-built binary, which has to be compiled once per machine. Before running Step 1 for the
+first time, rebuild it locally from source:
+
+```bash
+gfortran --version   # needs gfortran; if missing: conda install -c conda-forge gfortran (or your system package manager)
+cd scripts/atclus
+make atclus
+```
+
+This uses the `makefile` to recompile `atclus.o` from `atclus.f` /
+`atclus.inc` and re-link `atclus` from it. `scripts/pocket_analysis.py`
+(`_copy_executable`) copies `atclus.f`, `atclus.inc`, `atclus.o` and the
+`atclus` binary into each replicate's `pockets/` directory before running
+`./atclus` there, so keep all four in sync — don't hand-replace just the
+binary. Plain `make` (no target) also builds `atclus_dbx`, a debug build; `make atclus` alone is enough. `make clean` removes the
+build artifacts if you need to start over.
 
 ### Directory layout
 
 ```
 taar-pocketome/
 ├── config.py               # PROJECT_ROOT / INPUT_DIR / OUTPUT_DIR / ... — single source of truth for paths
-├── step0_prepare_clean_input.py   # Step 0 — one-time raw-data migration (see below)
 ├── step1_preprocessing_pocket_detection.ipynb   # Step 1 walkthrough
 ├── step2_pocket_analysis.ipynb                  # Step 2 walkthrough
 ├── input/                   # raw MD data — read-only, never written to by the pipeline
@@ -68,7 +112,7 @@ taar-pocketome/
 │                             #   orchestration, pocket-table parsing, global-ID clustering,
 │                             #   binding-site & transiency classification, plotting
 ├── taar_paper_figures/       # Step 3 — publication figures, replicate concordance, global-ID
-│                             #   heatmap/summary, PyMOL/Blender helpers (own README below)
+│                             #   heatmap/summary (own README below; Blender renders not included)
 ├── scripts/                  # shared library of per-trajectory primitives (preprocessing,
 │                             #   RMSD/RMSF, pocket search) used by Step 1, plus the vendored
 │                             #   atclus/ pocket-clustering tool
@@ -89,26 +133,8 @@ falling back to the current working directory. **Run scripts from the repo
 root**, or `export TAAR_ROOT=/path/to/taar-pocketome` first if that's not
 convenient (e.g. submitting a job from elsewhere). Drop your own data into
 `input/apo_structures/` and `input/holo_structures/` following the layout
-above before running Step 1 (or normalize it there with Step 0 first).
+above before running Step 1.
 
----
-
-## Step 0 — one-time raw-data migration → `step0_prepare_clean_input.py`
-
-Dataset-specific, **not** part of the general pipeline: it is the step that
-gets raw simulation output (written by two different upstream sources, at two
-different raw frame frequencies, in three different file layouts) into the
-uniform `input/apo_structures/`, `input/holo_structures/` shape every later
-step assumes, so nothing downstream ever has to guess about simulation
-settings again. Detection is pattern-based and reports every replicate's
-outcome (`OK`/`SKIPPED`/`REVIEW`/`MISSING`/`ERROR`) to
-`reference_data/input_data_settings_summary.csv`, flushed after each
-replicate so an interrupted run leaves an accurate partial record. Re-running
-it leaves already-migrated replicates untouched.
-
-Only relevant if you're reproducing this dataset's migration from its
-original sources; if you already have data in the `input/` layout, skip
-straight to Step 1.
 
 ---
 
@@ -127,7 +153,7 @@ For every replicate under `input/apo_structures/` and `input/holo_structures/`:
    MDAnalysis, the user can decide what RMSD values should be calculated,
    following their documentation.
 3. Run the MDpocket-based pocket search — `scripts/pocket_analysis.py`
-   (dummy-atom clustering via the vendored `scripts/atclus/` tool).
+   (dummy-atom clustering via the `scripts/atclus/` tool).
 
 Results are written to `output/apo_structures/` and `output/holo_structures/`,
 mirroring the input PDB+rep tree (dry protein, aligned trajectory, RMSD/RMSF
@@ -143,13 +169,13 @@ everything downstream reads its output.
 Turns Step 1's `pockets/` output (mdpocket/ATClus dummy-atom PDBs, descriptor
 files, residue files) into per-pocket dataframes:
 
-| Module | Purpose |
-|---|---|
+| Module | Purpose                                                                                                                                                                                            |
+|---|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `pocket_dataframes.py` | Main driver (`PocketFileParser` + `build_pocket_dataframes`): parses pocket files, interpolates volume across short closures, flags orthosteric/largest/transient pockets, derives `volume_category` |
-| `orthosteric_filter_ligand_based.py` | Single source of truth for `is_binding_site` (see *Binding-site (orthosteric) definition* below) |
-| `consecutive_zeros_transiency.py` | Single source of truth for the `transient` column (see *Transiency definition* below) |
-| `pocket_io.py` | Shared CSV/Parquet I/O — every big table is written as both, read back through `load_table()` (parquet preferred) |
-| `visualizations.py` | Plotting module (~30 functions), incl. `categorize_volume` (the single source of truth for size-category boundaries) |
+| `orthosteric_filter_ligand_based.py` | Defines `is_binding_site` (see *Binding-site (orthosteric) definition* below)                                                                                                                      |
+| `consecutive_zeros_transiency.py` | Defines `transient` column (see *Transiency definition* below)                                                                                                                                     |
+| `pocket_io.py` | Shared CSV/Parquet I/O — every big table is written as both, read back through `load_table()` (parquet preferred)                                                                                  |
+| `visualizations.py` | Plotting module, incl. `categorize_volume` (size-category boundaries)                                                                                 |
 
 ```python
 from pipeline.pocket_dataframes import build_pocket_dataframes, pocket_dirs_for
@@ -162,24 +188,20 @@ Writes `all_pockets` (one row per pocket, frame, alpha sphere) and
 `.parquet`, plus `orthosteric_perframe_volumes.csv`, to
 `output/meta_analysis/across_genes/` by default.
 
-#### Binding-site (orthosteric) definition
+#### Binding-site (orthosteric pocket) definition
 
 Computed once by `orthosteric_filter_ligand_based.classify_binding_site`, this
 is the only definition of "orthosteric" in the pipeline:
 
 1. Per holo PDB, take the co-crystallized ligand's centroid
-   (`load_ligand_centroids`). Apo structures have no ligand of their own (it's
-   stripped out before the MD system is built), so an apo pocket is scored
-   against its holo counterpart's centroid instead.
-2. A pocket is binding-site if its own centroid (the mean x/y/z of all its
+   (`load_ligand_centroids`). Apo pockets are scored against their holo counterpart's centroid.
+2. A pocket is orthosteric if its own centroid (the mean x/y/z of all its
    dummy-atom/alpha-sphere coordinates, across every frame) is within 5 Å
    (`DEFAULT_DISTANCE_THRESHOLD`) of that ligand centroid.
 
 Stored as `is_binding_site` in Step 2.2's `pocket_comparison_table.csv`, and
 merged into `pocket_dataframes.py`'s own output (`all_pockets` /
-`pocket_summary`) as `is_orthosteric` — the name every `taar_paper_figures/`
-reader expects. Both names refer to the same underlying classification,
-computed exactly once.
+`pocket_summary`) as `is_orthosteric`.
 
 #### Transiency definition
 
@@ -203,7 +225,7 @@ many individual frames but never closed for long.
 A **global pocket ID** is a dataset-scoped identifier that lets the same
 pocket be tracked across MD replicates and across the apo/holo split, where
 each run otherwise produces its own independent local numbering. A pocket's
-global ID is only meaningful **within the run that produced it** — two
+global ID (GID) is only meaningful **within the run that produced it** — two
 pockets can only share one if they were voxel-clustered together in the same
 call, so IDs from two different runs are not directly comparable (unless
 reconciled via `match_states()`, see below).
@@ -226,10 +248,25 @@ all_pockets = pocket_io.load_table(conf.META_ANALYSIS_DIR, 'all_pockets')
 pocket_summary = pocket_io.load_table(conf.META_ANALYSIS_DIR, 'pocket_summary')
 results = run_global_id_states(all_pockets, pocket_summary, states=['apo', 'holo', 'both'],
                                 source_loc=conf.META_ANALYSIS_DIR, gid_root=conf.META_ANALYSIS_ROOT,
-                                reconcile_apo_holo=True)
+                                pdb_ids=conf.REPRESENTATIVE_PDB_IDS, reconcile_apo_holo=True)
 ```
 
-Clustering method: voxelize every pocket's alpha-sphere point cloud, dilate to
+Scoping a run through `pdb_ids=` / `genes=`:
+
+`all_pockets`/`pocket_summary` from Step 2.1 always cover every PDB ID — but
+clustering all of them into one Global ID run isn't itself a meaningful
+comparison. `pdb_ids=` (and
+`genes=`) scope a run based on a specific research question: comparing apo vs holo, comparing
+one receptor's triplicate MD replicates, or — `conf.REPRESENTATIVE_PDB_IDS`
+above, one PDB ID per gene (`8ITF`/mTAAR9, `8JLJ`/mTAAR1, `8JLR`/hTAAR1,
+`8PM2`/mTAAR7f) — showcasing Global ID conservation/divergence across a
+biologically diverse set of genes. `all_pockets`/`pocket_summary` are
+unaffected either way; filter them yourself by the same `pdb_id` column to
+see exactly what a given run was scoped to.
+
+Clustering method: 
+
+voxelize every pocket's alpha-sphere point cloud, dilate to
 absorb small shifts, compute pairwise Intersection-over-Union, and take
 connected components (IoU ≥ threshold) as global IDs. Writes, per run,
 `pocket_comparison_table` (one row per local pocket, with its global ID,
@@ -241,7 +278,9 @@ plots).
 If `'apo'` and `'holo'` are both requested with `reconcile_apo_holo=True`,
 `match_states()` additionally reconciles their independent numberings by
 bidirectional nearest-centroid matching, writing
-`apo_holo_global_id_mapping/global_id_state_mapping.csv`.
+`apo_holo_global_id_mapping/global_id_state_mapping.csv`. 
+Note that this method was introduced to discuss the GID functionality in the 
+paper and probably has no functionality other than that.
 
 The `'both'` run also calls `run_apo_holo_comparison()`, writing
 `apo_holo_pocketome_summary.csv`: per-PDB allosteric pocketome metrics (Δ
@@ -254,10 +293,10 @@ plus the orthosteric binding-site volume shift (from
 
 ## Step 3 (optional) — publication figures → `taar_paper_figures/`
 
-A self-contained figure package (RMSD heatmaps, binding-site, allosteric
+A figure package (RMSD heatmaps, binding-site, allosteric
 pocketome, replicate concordance, global-ID heatmap, Blender panel-D renders)
 with its own README (`taar_paper_figures/paper_figures_README.md`) covering
-inputs/outputs, the colour system, and the Blender workflow in detail.
+inputs/outputs & the colour system in detail. NOte that the paper also includes blender renders, which are not included here.
 
 ```bash
 python taar_paper_figures/paper_plots.py
@@ -276,10 +315,6 @@ python taar_paper_figures/paper_plots.py
 | `summary_global_ids_paper.py` | One row per global ID over the combined apo+holo run |
 | `gid_replicate_analysis_wrapper.py` | Replicate concordance: descriptive stats (counts, occupancy spectrum, Jaccard vs. permutation null, rarefaction), a silhouette check that global IDs are spatially real, and a threshold-sweep robustness check |
 | `replicate_figures.py` | Renders the replicate-concordance figure (count collapse, occupancy, presence matrix, Jaccard heatmap, rarefaction) |
-| `pymol_ambiguous_pockets.py` | Writes a PyMOL session per pocket whose occupancy class is unstable across the threshold sweep, for visual inspection |
-| `blender_global_id_prep.py` | Picks, per global pocket, the MD frame closest to its median volume and exports it as a Molecular-Nodes-ready PDB |
-| `calibrate_pocket_radii.py` | Solves the sphere radius that reproduces each pocket's reported volume, for the Blender render (raw alpha-sphere radii overstate pocket size ~3-5x) |
-| `blender/export_pocket_coords.py`, `blender/set_pocket_colours.py`, `blender/set_render_background.py` | Run inside Blender: camera-projected pocket vertices for panel D, pocket material colours, transparent-film render settings |
 
 Note the two-way coupling with `pipeline/`: `global_id_and_comparison.py`
 imports `taar_style`, `pocketome_metrics` and `fig2_binding_site` from this
@@ -294,8 +329,7 @@ each figure.
 
 MD preprocessing (drying/aligning), RMSD/RMSF, and pocket search
 (mdpocket/ATClus) — the classes Step 1 orchestrates. Actively imported by
-Step 1 and by `taar_paper_figures/global_id_heatmap.py` — not archived, not
-optional.
+Step 1 and by `taar_paper_figures/global_id_heatmap.py`.
 
 | Module | Purpose |
 |---|---|
@@ -305,31 +339,15 @@ optional.
 | `extract_iso.py` | Isosurface PDB extraction from mdpocket's density grid, used by `pocket_analysis.py` |
 | `gene_selections.py` | PDB ID → gene lookup and per-gene RMSD group selections (binding site, ICL3) |
 | `logging.py` | Trivial print-to-file logger used across the pipeline |
-| `atclus/` | Vendored Fortran source + build artifacts for the ATClus pocket-clustering tool (see Setup) |
+| `atclus/` | Fortran source + build artifacts for the ATClus pocket-clustering tool (see Setup) |
 
 ## `reference_data/`
 
 - `TAARs_numbered/` — GPCRdb residue-numbering tables per receptor, used by `pipeline/visualizations.py` (`plot_largest_pockets`, via its `bw_csv_file` argument) to draw Ballesteros-Weinstein helix boundaries.
 - `binding_site_residues.txt` / `ICL3_definition.txt` — per-gene residue numbers (+ BW numbering) used for Step 1's RMSD group selections (`scripts/gene_selections.py`).
-- `hard_coded_gene_dict.txt` — PDB-ID → gene-name lookup, the single source of truth used by `scripts/gene_selections.py` and both `taar_style.py` helpers.
-- `input_data_settings_summary.csv` — Step 0's per-replicate migration report (generated, not hand-maintained).
+- `hard_coded_gene_dict.txt` — PDB-ID → gene-name lookup (necessary because the PDB API had some downtime during development, but also mor reliable because it is manually curated)
 
-The first three are small, static reference tables required for the code to
-run — not experimental output, so they're checked in rather than published
-with the data.
+They are small, static reference tables required for the code to
+run —  so they're checked in rather than published with the data.
 
----
 
-## Known gaps
-
-- `reference_data/binding_site_residues.txt` / `ICL3_definition.txt` don't
-  have an entry for mTAAR9's TM5 BW-5.46 position — it's a one-residue
-  deletion relative to the other three genes, so no equivalent resid exists.
-- `taar_paper_figures/fig2_panel_d_pockets.py`'s `BLENDER_DIR` points at an
-  absolute path outside this repo — configure it to your own Blender project
-  location, same as the other external tools above.
-- `pipeline/meta_analysis.sh` is a stale SLURM launcher for a `comp_with_sel.py`
-  CLI wrapper that no longer exists in the pipeline (superseded by the
-  `pipeline/pocket_dataframes.py` / `global_id_and_comparison.py` split
-  above) — left as reference for the SLURM invocation shape, not runnable
-  as-is.

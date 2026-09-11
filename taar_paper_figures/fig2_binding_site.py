@@ -4,6 +4,7 @@ C hTAAR1 orthosteric site render | D largest vs smallest pocket (renders + silho
 rows = the same gene-ordered PDB IDs as figure 1."""
 import os
 import re
+import sys
 
 import numpy as np
 import pandas as pd
@@ -12,6 +13,10 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # so `import taar_style` works
+# whether this module is imported as `taar_paper_figures.fig2_binding_site` (e.g. from
+# pipeline/global_id_and_comparison.py, repo root on sys.path) or run as part of the
+# standalone `paper_plots.py` script (this directory on sys.path)
 import taar_style as ts
 
 # ---------------------------------------------------------------- constants

@@ -25,16 +25,17 @@ import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from scripts import gene_selections
 from scripts import logging as logger
-import pocket_io
-import visualizations as vis
-from orthosteric_filter_ligand_based import classify_binding_site
-from consecutive_zeros_transiency import classify_transient
+from pipeline import pocket_io
+from pipeline import visualizations as vis
+from pipeline.orthosteric_filter_ligand_based import classify_binding_site
+from pipeline.consecutive_zeros_transiency import classify_transient
 
-ISOVALUE = 3.0
+ISOVALUE = conf.ISOVALUES[0]
 MIN_ATOMS = 10
 DBSCAN = False
 
@@ -42,14 +43,10 @@ DESCRIPTOR_COLS = [
     'pock_asa', 'pock_pol_asa', 'pock_apol_asa', 'pock_asa22', 'pock_pol_asa22', 'pock_apol_asa22',
     'nb_AS', 'mean_as_ray', 'mean_as_solv_acc', 'apol_as_prop', 'mean_loc_hyd_dens',
     'hydrophobicity_score', 'volume_score', 'polarity_score', 'charge_score', 'prop_polar_atm',
-    'as_density', 'as_max_dst', 'convex_hull_volume', 'nb_abpa']
+    'as_density', 'as_max_dst', 'convex_hull_volume', 'nb_abpa']  # mdpocket descriptor columns
 RESIDUE_COLS = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 'LEU', 'LYS',
                 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']
 
-# The columns kept in all_pockets / pocket_summary -- identity, coordinates, descriptors,
-# amino-acid composition, and the flags computed below. Everything else the parser produces
-# (raw file paths, the un-interpolated pock_volume duplicate columns, isovalue -- fixed at 3.0
-# for every row) is dropped as noise.
 KEEP_COLS = (['ID', 'Local ID', 'prj', 'rep', 'state', 'pdb_id', 'gene', 'pocket_number',
              'x', 'y', 'z', 'snapshot', 'interpolated_pock_volume']
              + DESCRIPTOR_COLS + RESIDUE_COLS
@@ -73,23 +70,31 @@ class PocketFileParser:
         self.min_atoms = min_atoms
 
     def _normalize_pocket_filenames(self):
-        """ATClus/mdpocket save filenames including a float with a dot separator, which breaks
-        parsing. Called first so no filename has a dot anywhere but the extension: if isovalue
-        is a non-integer float, its dot is replaced with an underscore.
-        Example: mdpout_dens_iso_3.5-out-01.pdb -> mdpout_dens_iso_3_5-out-01.pdb"""
-        if isinstance(self.isovalue, float) and not self.isovalue.is_integer():
-            iso_str = str(self.isovalue)
-            iso_dot = f"iso_{iso_str}"
-            iso_underscore = f"iso_{iso_str.replace('.', '_')}"
+        """ATClus/mdpocket always save filenames with the isovalue written as a bare float (e.g.
+        mdpout_dens_iso_3.0-out-01.pdb, mdpout_dens_iso_3.5-out-01.pdb) -- which breaks every
+        downstream dot-free assumption (the -out- search pattern below, and _parse_filename's
+        digit-only regex) if left alone. Called first so no filename has a dot anywhere but the
+        extension: a non-integer isovalue has its dot replaced with an underscore (iso_3.5 ->
+        iso_3_5); an integer-valued one has the dot AND trailing zero stripped entirely (iso_3.0
+        -> iso_3, matching the "_i3"-style ID convention used everywhere else in the pipeline) --
+        NOT just left as iso_3.0, which is the same string as iso_3 plus a silently-ignored
+        ".0" as far as any dot-free matcher downstream is concerned, so it must actually change."""
+        if not isinstance(self.isovalue, float):
+            return
+        iso_str = str(self.isovalue)
+        iso_dot = f"iso_{iso_str}"
+        iso_clean = f"iso_{int(self.isovalue)}" if self.isovalue.is_integer() else f"iso_{iso_str.replace('.', '_')}"
+        if iso_dot == iso_clean:
+            return
 
-            for pocket_path in self.pocket_dirs:
-                if os.path.isdir(pocket_path):
-                    for filename in os.listdir(pocket_path):
-                        if iso_dot in filename and iso_underscore not in filename:
-                            new_filename = filename.replace(iso_dot, iso_underscore)
-                            os.rename(os.path.join(pocket_path, filename), os.path.join(pocket_path, new_filename))
-                            if self.verbose:
-                                print(f"Renamed: {filename} -> {new_filename}")
+        for pocket_path in self.pocket_dirs:
+            if os.path.isdir(pocket_path):
+                for filename in os.listdir(pocket_path):
+                    if iso_dot in filename:
+                        new_filename = filename.replace(iso_dot, iso_clean)
+                        os.rename(os.path.join(pocket_path, filename), os.path.join(pocket_path, new_filename))
+                        if self.verbose:
+                            print(f"Renamed: {filename} -> {new_filename}")
 
     def _parse_filename(self, filename):
         """Parses filename to extract isovalue, pocket number, and type."""
@@ -256,7 +261,7 @@ class PocketFileParser:
         return result_dict, pockets_to_drop
 
     def interpolation_volume(self, df, col_to_interpolate, limit=2, limit_area='inside', method='linear'):
-        """Interpolates 0-valued (closed-pocket) frames, up to `limit` consecutive ones, so a
+        """Interpolates 0-valued (closed-pocket) frames, up to `limit` (2 by default) consecutive ones, so a
         pocket that briefly closes doesn't register as a volume of exactly 0 for that frame.
         See https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.interpolate.html"""
         if self.verbose:
@@ -272,9 +277,13 @@ class PocketFileParser:
 
 
 def _add_identity_columns(df):
-    """Local ID (per-experiment pocket identifier, isovalue suffix stripped), pdb_id, state
-    and gene -- gene from reference_data/hard_coded_gene_dict.txt via scripts.gene_selections"""
-    df['Local ID'] = df['ID'].str.replace(r'_i[\d.]+$', '', regex=True)
+    """Local ID (per-experiment pocket identifier -- kept isovalue-inclusive, same as ID: pocket
+    numbering restarts per isovalue within pocket_search's isovalues=[...] list, so a stripped
+    suffix would falsely equate e.g. p01@i2.0 with an unrelated p01@i3.0; only the voxel-IoU
+    spatial clustering in global_id_and_comparison.py is allowed to unify pockets across
+    isovalues), pdb_id, state and gene -- gene from reference_data/hard_coded_gene_dict.txt via
+    scripts.gene_selections"""
+    df['Local ID'] = df['ID']
     df['state'] = df['prj'].str.extract(r'^(apo|holo)', expand=False)
     df['pdb_id'] = df['prj'].str.extract(r'^(?:apo|holo)([A-Za-z0-9]+)', expand=False)
     gene_map = gene_selections.gene_dict()
@@ -283,11 +292,10 @@ def _add_identity_columns(df):
     return df
 
 
-def _add_orthosteric_flag(df, res_to_pock_df, saving_loc):
-    """is_orthosteric via orthosteric_filter_ligand_based.classify_binding_site()"""
-    res_to_pock_df = res_to_pock_df.copy()
-    res_to_pock_df['residue_id'] = res_to_pock_df['residue_id'].astype(int)
-    ortho = classify_binding_site(res_to_pock_df, holo_base=conf.HOLO_BASE_DIR, saving_loc=saving_loc)
+def _add_orthosteric_flag(df, saving_loc):
+    """is_orthosteric via orthosteric_filter_ligand_based.classify_binding_site() -- run on
+    `df` itself (pocket centroid vs. ligand centroid), not the residue table."""
+    ortho = classify_binding_site(df, holo_base=conf.HOLO_BASE_DIR, saving_loc=saving_loc)
     ortho = ortho.assign(rep=ortho['rep'].astype(str), pocket_number=ortho['pocket_number'].astype(str))
 
     df = df.assign(rep=df['rep'].astype(str), pocket_number=df['pocket_number'].astype(str))
@@ -314,7 +322,6 @@ def _add_largest_pocket_flags(df, volume_col='interpolated_pock_volume'):
 def _add_volume_category(df, volume_col='interpolated_pock_volume'):
     """median_pock_volume_all/_open and volume_category, mapped onto every row of a pocket
     (not just its first frame) so all_pockets stays self-sufficient for per-frame filtering.
-
     apo runs start from the holo conformation, so a first-frame volume (and any category
     derived from it) is biased towards holo -- volume_category uses the trajectory median
     instead. Two medians are kept because they answer different questions: _all averages in
@@ -348,7 +355,7 @@ def build_pocket_dataframes(pocket_dirs, saving_loc=conf.META_ANALYSIS_DIR, isov
     all_pockets = pd.merge(result_dict['dummy_atom_df'], intpol_descr_df,
                            on=['ID', 'pocket_number', 'prj', 'rep', 'isovalue'], how='outer')
     all_pockets = _add_identity_columns(all_pockets)
-    all_pockets = _add_orthosteric_flag(all_pockets, result_dict['res_to_pock_df'], saving_loc)
+    all_pockets = _add_orthosteric_flag(all_pockets, saving_loc)
     all_pockets = _add_largest_pocket_flags(all_pockets)
     all_pockets, transient_dict = classify_transient(all_pockets, volume_col='interpolated_pock_volume')
     all_pockets = _add_volume_category(all_pockets)
@@ -386,9 +393,6 @@ def _make_plots(all_pockets, pocket_summary, transient_dict, saving_loc, bw_file
                                     ('orthosteric', ortho_df, 'plots_orthosteric')):
         out_dir = os.path.join(saving_loc, plot_dir)
         os.makedirs(out_dir, exist_ok=True)
-        if len(sub_df) == 0:
-            print(f"  WARNING: no {label} pockets, skipping plots")
-            continue
         if bw_file_loc and pdb_file_loc:
             try:
                 vis.plot_largest_pockets(
@@ -431,7 +435,6 @@ def _make_plots(all_pockets, pocket_summary, transient_dict, saving_loc, bw_file
 def create_comparison_plots(summary_df, saving_loc, greyscale=False):
     """Largest-vs-orthosteric comparison plots: overlap, stability, volume category, and
     whether the largest pocket of each experiment is also its orthosteric one."""
-    import plotly.graph_objects as go
 
     stability_colors = vis.get_color_dict('stability', greyscale)
     volume_colors = vis.get_color_dict('volume', greyscale)
@@ -504,9 +507,19 @@ def create_comparison_plots(summary_df, saving_loc, greyscale=False):
     comparison_summary.to_csv(os.path.join(comparison_dir, 'comparison_summary.csv'), index=False)
 
 
-def pocket_dirs_for(state_dirs=(conf.APO_RESULTS_DIR, conf.HOLO_RESULTS_DIR)):
+def pocket_dirs_for(state_dirs=(conf.APO_RESULTS_DIR, conf.HOLO_RESULTS_DIR), isovalue=None,
+                    isovalues=conf.ISOVALUES, pdb_ids=None):
     """[<APO_RESULTS_DIR or HOLO_RESULTS_DIR>/<state><PDBID>/<rep>/pockets, ...] for every
-    replicate that has a Step 1 pockets/ output under it."""
+    replicate that has a Step 1 pockets/ output under it -- or, when isovalues has more than one
+    entry, the isovalue_<X.X> subdirectory for the given isovalue (see conf.isovalue_subpath()).
+
+    pdb_ids: None (default) includes every PDB ID; otherwise an iterable of PDB IDs restricts
+    this to just those -- a general-purpose filter (e.g. a quick test parse of one structure).
+    Step 2's own scoping of Global ID clustering to a meaningful subset (conf.
+    REPRESENTATIVE_PDB_IDS) happens downstream, in global_id_and_comparison.run_global_id_states'
+    own pdb_ids= -- not here. Leave this at None in the normal Step 2.1 pipeline run so
+    all_pockets/pocket_summary stay the complete dataset regardless of which subset any given
+    Global ID run is scoped to."""
     pocket_dirs = []
     for structures_dir in state_dirs:
         if not os.path.isdir(structures_dir):
@@ -515,21 +528,26 @@ def pocket_dirs_for(state_dirs=(conf.APO_RESULTS_DIR, conf.HOLO_RESULTS_DIR)):
             folder_path = os.path.join(structures_dir, folder)
             if not os.path.isdir(folder_path):
                 continue
+            if pdb_ids is not None and re.sub(r'^(apo|holo)', '', folder) not in pdb_ids:
+                continue
             for rep in sorted(os.listdir(folder_path)):
-                pockets_path = os.path.join(folder_path, rep, 'pockets')
+                pockets_path = conf.isovalue_subpath(os.path.join(folder_path, rep, conf.POCKETS_DIRNAME),
+                                                     isovalue, isovalues)
                 if os.path.isdir(pockets_path):
                     pocket_dirs.append(pockets_path)
     return pocket_dirs
 
 
 def main():
-    saving_loc = conf.META_ANALYSIS_DIR
     bw_file_loc = os.path.join(conf.REFERENCE_DATA_DIR, 'TAARs_numbered')
     pdb_file_loc = os.path.join(conf.HOLO_RESULTS_DIR, 'holo8ITF', '1')
 
-    pocket_dirs = pocket_dirs_for()
-    build_pocket_dataframes(pocket_dirs, saving_loc=saving_loc, bw_file_loc=bw_file_loc,
-                            pdb_file_loc=pdb_file_loc)
+    isovalues = conf.require_float_isovalues(conf.ISOVALUES)
+    for isovalue in isovalues:
+        saving_loc = conf.isovalue_meta_analysis_dir(isovalue, isovalues)
+        pocket_dirs = pocket_dirs_for(isovalue=isovalue, isovalues=isovalues)
+        build_pocket_dataframes(pocket_dirs, saving_loc=saving_loc, isovalue=isovalue,
+                                bw_file_loc=bw_file_loc, pdb_file_loc=pdb_file_loc)
 
 
 if __name__ == '__main__':

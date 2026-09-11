@@ -1,10 +1,18 @@
-name: taar-pocketome
+name: pocket_env
 channels:
   - conda-forge
   - bioconda
+  - nodefaults      # otherwise a node's own ~/.condarc silently appends 'defaults', which can
+                     # block non-interactively on Anaconda's channel Terms-of-Service prompt
 dependencies:
   - python=3.12
-  - pandas
+  - pandas<3        # pandas 3.0 defaults string columns to an Arrow-backed dtype; several
+                     # places in pipeline/pocket_dataframes.py concatenate a string column with
+                     # an .astype(str) object-dtype column (e.g. df['residue_name'] +
+                     # df['residue_id'].astype(str)), which raises `TypeError: operation 'radd'
+                     # not supported for dtype 'str' with dtype 'object'` under pandas 3.x. This
+                     # code was written and tested against pandas 2.x -- pin to that until those
+                     # call sites are audited and fixed for pandas 3.
   - numpy
   - scipy
   - scikit-learn
@@ -16,6 +24,13 @@ dependencies:
   - biopython
   - biopandas
   - mdanalysis
+  - fpocket         # provides the mdpocket/dpocket/fpocket/tpocket binaries scripts/pocket_analysis.py
+                     # shells out to (mdpocket specifically) -- confirmed conda-forge's fpocket
+                     # package ships the same upstream suite (github.com/Discngine/fpocket), not
+                     # a stripped-down build; verified 2026-09-11 after a from-scratch pocket_env
+                     # (created via this file, on a node with no pre-existing env) turned out to
+                     # be missing mdpocket entirely -- it was never actually a declared dependency
+                     # before, just silently present on whichever nodes had a hand-built env
   - requests
   - pyarrow         # parquet read/write for pipeline/pocket_io.py
   - ipywidgets
