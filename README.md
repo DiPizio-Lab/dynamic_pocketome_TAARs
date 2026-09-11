@@ -1,4 +1,4 @@
-# taar-pocketome
+# Dynamic Pocketome of Trace Amine-associated Receptors
 
 ![version](https://img.shields.io/badge/version-v1.0.0-blue)
 ![license](https://img.shields.io/badge/license-GPL--3.0-blue)
