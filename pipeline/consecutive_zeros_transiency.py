@@ -1,20 +1,9 @@
 """
-Transiency classification -- single source of truth for the `transient` column
-used everywhere in the pipeline.
+Transiency classification -- the `transient` column used everywhere in the pipeline.
 
-Definition: a pocket is transient if interpolated_pock_volume == 0 for at least
+A pocket is transient if interpolated_pock_volume == 0 for at least
 MIN_ZERO_FRACTION of the simulation's frames in total, AND for at least
-MIN_CONSECUTIVE_ZERO_FRAMES of them consecutively. This tells real transiency
-(long, sustained closures) apart from noise (a handful of scattered zero frames).
-Both conditions are needed: consecutive alone flags anything with one long-enough
-closed stretch regardless of how much of the trajectory that is, and the fraction
-alone flags anything scattered across enough individual frames regardless of
-whether any single closure is meaningful.
-
-At NS_PER_FRAME (1 ns/frame here), MIN_CONSECUTIVE_ZERO_FRAMES=50 is a run of
->=50 ns; MIN_ZERO_FRACTION=0.10 is >=10% of the simulation, i.e. >=100 frames /
-100 ns for a standard 1000-frame/1000 ns run -- but expressed as a fraction so it
-scales correctly if a trajectory is a different length.
+MIN_CONSECUTIVE_ZERO_FRAMES of them consecutively.
 """
 import sys
 import pandas as pd
@@ -61,11 +50,7 @@ def find_max_consecutive_zeros(volume_series: np.ndarray) -> int:
 
 
 def _per_frame_volumes(group: pd.DataFrame, volume_col: str) -> np.ndarray:
-    """One volume value per snapshot, sorted by snapshot. A pocket has multiple rows
-    per frame (one per alpha sphere/dummy atom, all sharing the same volume), so this
-    must dedupe to a single value per frame before counting frames -- otherwise frame
-    counts (and anything compared against an ns-based threshold) are inflated by the
-    number of alpha spheres per frame."""
+    """One volume value per snapshot, sorted by snapshot."""
     return group.groupby('snapshot')[volume_col].first().sort_index().values
 
 
@@ -186,7 +171,6 @@ def add_max_consecutive_zeros_chunked(data_path: str,
 
         for pocket_id, group in chunk.groupby('ID'):
             frame_volumes = all_ids_seen.setdefault(pocket_id, {})
-            # dedupe to one value per snapshot (multiple alpha spheres share a frame's volume)
             for snapshot, volume in zip(group['snapshot'], group[volume_col]):
                 frame_volumes.setdefault(snapshot, volume)
 
@@ -263,8 +247,8 @@ def summarize_consecutive_zeros(df: pd.DataFrame) -> None:
     print(f"  1-3 frames (noise): {((pocket_summary > 0) & (pocket_summary <= 3)).sum():,} pockets")
     print(f"  4-10 frames: {((pocket_summary > 3) & (pocket_summary <= 10)).sum():,} pockets")
     print(f"  11-50 frames: {((pocket_summary > 10) & (pocket_summary <= 50)).sum():,} pockets")
-    print(f"  >{MIN_CONSECUTIVE_ZERO_FRAMES:.0f} frames (meets the consecutive half of the transient definition, "
-          f"see classify_transient): {(pocket_summary > MIN_CONSECUTIVE_ZERO_FRAMES).sum():,} pockets")
+    print(f"  >{MIN_CONSECUTIVE_ZERO_FRAMES:.0f} frames: "
+          f"{(pocket_summary > MIN_CONSECUTIVE_ZERO_FRAMES).sum():,} pockets")
 
 
 # =============================================================================

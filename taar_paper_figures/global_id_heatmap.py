@@ -3,7 +3,7 @@ The 'compare everything' panel for the combined apo+holo run. Built ONLY from
 pocket_comparison_table.csv (no 60GB file). Uses output of pipeline/global_id_and_comparison.py to generate a heatmap.
 
     rows    = Global ID (ubiquitous pockets on top; orthosteric flagged if the
-              is_binding_site column is populated -- re-run the fixed wrapper for that)
+              is_binding_site column is populated)
     columns = every experiment, ordered gene -> state -> rep, so:
                 * the 3 columns inside one gene+state block  = replicate reproducibility
                 * the two state blocks inside one gene       = apo vs holo

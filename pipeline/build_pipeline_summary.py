@@ -9,20 +9,13 @@ input/{apo,holo}_structures/ from the presence of the files Step 1 (pipeline/ana
 dataset-wide stages (meta_analysis, global_id, optional_analyses) are inferred from Step 2/3's
 output tables under output/meta_analysis/, recorded on the shared run_summary.AGGREGATE_KEY row.
 These are only ever OK when the table's own 'prj'/'rep' columns cover every replicate
-get_project_list() finds under input/{apo,holo}_structures/ -- the table/figure merely existing
-is not enough, since a Step 2 run interrupted after only a handful of replicates still leaves a
-perfectly readable (but partial) all_pockets.csv / pocket_comparison_table.csv behind.
+get_project_list() finds under input/{apo,holo}_structures/.
 
-Every checkpoint is timestamped with the underlying result file's own mtime, not "now" -- so a
-stage backfilled from files that predate a later, failed re-run still visibly shows its true,
-stale date rather than looking freshly verified.
+Every checkpoint is timestamped with the underlying result file's own mtime, not "now".
 
 Does not run anything -- read-only over output/, writes only logs/pipeline_summary.csv.
 
-Run this as `python pipeline/build_pipeline_summary.py`, not from inside scripts/ -- Python puts
-the invoked script's own directory first on sys.path, and scripts/logging.py would then shadow
-the stdlib `logging` module that MDAnalysis (imported transitively via analysis_pipeline.py)
-needs.
+Run this as `python pipeline/build_pipeline_summary.py`, not from inside scripts/.
 """
 import csv
 import os

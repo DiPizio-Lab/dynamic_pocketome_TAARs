@@ -1,30 +1,16 @@
 """
-Orthosteric ("binding site") pocket classification -- single source of truth for
-the underlying is_binding_site/is_orthosteric label used everywhere in the
-pipeline (Step 2 and Step 3). Computed once here as `is_binding_site`
-(pocket_comparison_table.csv, Step 2a and Step 3); Step 2b merges it in and
-renames it to `is_orthosteric` for pocket_analysis_summary.csv and everything
-downstream of that file (run_apo_holo_comparison.py, taar_paper_figures/) --
-see the README for why the name differs between the two.
+Orthosteric ("binding site") pocket classification. Computed here as
+`is_binding_site` (pocket_comparison_table.csv, Step 2a and Step 3); Step 2b
+merges it in and renames it to `is_orthosteric` for pocket_analysis_summary.csv
+and everything downstream of that file.
 
-Definition: a pocket is binding-site (orthosteric) if its own centroid (the mean
-x/y/z of all its dummy-atom/alpha-sphere coordinates, across every frame) falls
-within DEFAULT_DISTANCE_THRESHOLD (5 A) of its PDB's co-crystallized ligand
-centroid. This is deliberately a coarse, whole-pocket-vs-whole-ligand comparison
-rather than a residue-level one: a pocket that genuinely envelops the ligand has
-a centroid close to the ligand's by construction. A residue-overlap version of
-this (site = protein residues within 5 A of the ligand centroid, pocket must
-cover >=80% of them) was tried and reverted -- for a small, 9-heavy-atom ligand
-that "site" collapsed to 2-3 residues, so essentially no real pocket could ever
-match it, and every experiment came back with 0 orthosteric pockets.
+A pocket is binding-site (orthosteric) if its own centroid (the mean x/y/z of
+all its dummy-atom/alpha-sphere coordinates, across every frame) falls within
+DEFAULT_DISTANCE_THRESHOLD (5 A) of its PDB's co-crystallized ligand centroid.
 
-Apo structures never carry a ligand -- it's stripped out before the MD system is
-built, so extract_ligand_coords() returns None for every apo PDB. An apo pocket
-is therefore scored against its *holo counterpart's* ligand centroid instead.
-That falls out naturally from load_ligand_centroids() only ever reading
-holo_base and keying its result by bare PDB ID (no apo/holo prefix):
-classify_binding_site() strips the same prefix off each pocket's own project id
-before the lookup, so 'apo8ITF' and 'holo8ITF' resolve to the same dict entry.
+Apo pockets are scored against their *holo counterpart's* ligand centroid
+(load_ligand_centroids() only reads holo_base, keyed by bare PDB ID; an apo
+pocket's own apo/holo prefix is stripped before the lookup).
 """
 
 import os
@@ -88,15 +74,7 @@ def load_ligand_centroids(holo_base: str = DEFAULT_HOLO_BASE,
     """
     Per bare PDB ID (no apo/holo prefix, e.g. '8ITF'): the co-crystallized
     ligand's centroid, extracted from that PDB's holo structure (the
-    lowest-numbered replicate under holo_base/holo<PDBID>/<rep>/structure.pdb --
-    the ligand pose at frame 0 is effectively the same across replicates of the
-    same crystal structure, so any one of them will do).
-
-    Deliberately only ever reads holo_base: apo structures have no ligand of
-    their own (extract_ligand_coords returns None for them), so
-    classify_binding_site() looks an apo pocket up in this same holo-keyed
-    dict, after stripping its own apo/holo prefix the same way this function
-    strips pdb_dir.name's.
+    lowest-numbered replicate under holo_base/holo<PDBID>/<rep>/structure.pdb).
     """
     holo_path = Path(holo_base)
     centroids: Dict[str, np.ndarray] = {}

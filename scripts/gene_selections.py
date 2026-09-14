@@ -41,10 +41,7 @@ def _load_resid_dict(path):
 
 
 def gene_dict():
-    """{PDB ID: gene}, e.g. {'8ITF': 'mTAAR9', ...} -- the single source of truth for PDB ID ->
-    gene, read fresh from reference_data/hard_coded_gene_dict.txt every call (cheap, tiny file).
-    Also used directly by pipeline/pocket_dataframes.py and taar_paper_figures/taar_style.py, so
-    this file is the only place that mapping is allowed to live -- don't hardcode a copy elsewhere."""
+    """{PDB ID: gene}, e.g. {'8ITF': 'mTAAR9', ...}, read from reference_data/hard_coded_gene_dict.txt."""
     with open(GENE_DICT_PATH) as f:
         text = f.read()
     return ast.literal_eval(text.split('=', 1)[1].strip())

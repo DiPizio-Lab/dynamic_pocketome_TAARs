@@ -87,6 +87,17 @@ def js_per_structure(df, pdb_order, **cols):
     return np.array(med), np.array(lo), np.array(hi)
 
 
+def representative_replicate(df, pdb_col="pdb_id", state_col="state", rep_col="rep"):
+    """{(pdb, state): rep} -- the replicate whose total pocket count is the median of that
+    (pdb, state)'s per-replicate totals (ties broken by the smallest rep id)."""
+    out = {}
+    for key, grp in df.groupby([pdb_col, state_col], observed=True):
+        per_rep_total = grp.groupby(rep_col).size()
+        median_val = per_rep_total.median()
+        out[key] = (per_rep_total - median_val).abs().idxmin()
+    return out
+
+
 def delta_median_volume(df, pdb_order, volume_col="median_pock_volume_open",
                         pdb_col="pdb_id", state_col="state"):
     """percent change in the median allosteric pocket volume, (holo - apo) / apo * 100.
@@ -104,39 +115,37 @@ def delta_median_volume(df, pdb_order, volume_col="median_pock_volume_open",
     return np.array(out, dtype=float)
 
 
-def delta_pocket_count(df, pdb_order, pdb_col="pdb_id", state_col="state", rep_col="rep"):
-    """change in the number of allosteric pockets, holo - apo, median over replicates"""
+def delta_pocket_count(df, pdb_order, pdb_col="pdb_id", state_col="state", rep_col="rep",
+                       rep_map=None):
+    """change in the number of allosteric pockets, holo - apo, per representative_replicate()."""
+    if rep_map is None:
+        rep_map = representative_replicate(df, pdb_col, state_col, rep_col)
     per_rep = df.groupby([pdb_col, state_col, rep_col], observed=True).size()
-    med = per_rep.groupby(level=[0, 1]).median()
     out = []
     for pdb in pdb_order:
         try:
-            out.append(float(med.loc[(pdb, "holo")] - med.loc[(pdb, "apo")]))
+            apo_rep, holo_rep = rep_map[(pdb, "apo")], rep_map[(pdb, "holo")]
+            out.append(float(per_rep.loc[(pdb, "holo", holo_rep)]
+                              - per_rep.loc[(pdb, "apo", apo_rep)]))
         except KeyError:
             out.append(np.nan)
     return np.array(out, dtype=float)
 
 
 def delta_category_fraction(df, pdb_order, pdb_col="pdb_id", state_col="state",
-                            cat_col="volume_category"):
-    """signed change in the FRACTION of pockets in each size category, holo - apo.
-
-    This is the readable form of what js_distance compresses into one number: instead of
-    'the profile moved by 0.35', it says 'small lost 18 points, medium gained 15, large
-    gained 3'. Fractions are used rather than counts so a structure that simply has more
-    pockets in one state does not register as a shape change - that is panel C's job.
-
-    Each row sums to zero by construction (fractions in minus fractions out), so the
-    positive and negative halves of a stacked bar are mirror images in total length.
-
-    Returns an (n_structures, n_categories) array aligned with pdb_order / CATEGORIES."""
+                            cat_col="volume_category", rep_col="rep", rep_map=None):
+    """signed change in the fraction of pockets in each size category, holo - apo, per
+    representative_replicate(). Returns an (n_structures, n_categories) array aligned
+    with pdb_order / CATEGORIES."""
+    if rep_map is None:
+        rep_map = representative_replicate(df, pdb_col, state_col, rep_col)
     out = np.full((len(pdb_order), len(CATEGORIES)), np.nan)
     for i, pdb in enumerate(pdb_order):
-        sub = df[df[pdb_col] == pdb]
         fracs = {}
         for state in ("apo", "holo"):
-            counts = np.array([(sub[(sub[state_col] == state)][cat_col] == c).sum()
-                               for c in CATEGORIES], dtype=float)
+            rep = rep_map.get((pdb, state))
+            sub = df[(df[pdb_col] == pdb) & (df[state_col] == state) & (df[rep_col] == rep)]
+            counts = np.array([(sub[cat_col] == c).sum() for c in CATEGORIES], dtype=float)
             fracs[state] = counts / counts.sum() if counts.sum() else counts
         out[i] = fracs["holo"] - fracs["apo"]
     return out

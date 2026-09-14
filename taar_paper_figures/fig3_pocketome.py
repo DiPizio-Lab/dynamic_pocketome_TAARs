@@ -18,29 +18,22 @@ sys.path.insert(0, os.path.join(ts.ROOT, "pipeline"))  # for `pocket_io`
 import pocket_io
 
 # ---------------------------------------------------------------- constants
-# pipeline/pocket_dataframes.py writes pocket_summary (csv+parquet); was pocket_analysis_summary.csv
 POCKET_DATA_DIR = os.path.join(ts.ROOT, "output", "meta_analysis", "across_genes")
 OUT_FILE = os.path.join(ts.FIG_DIR, "figure3_allosteric_pocketome.png")
 
 COL_PDB, COL_STATE, COL_REP = "pdb_id", "state", "rep"
 COL_CAT = "volume_category"
 COL_ORTHO = "is_orthosteric"
-# TRANSIENCY. The stored `true_transient` column is (max_consecutive_zero_frames >= 50)
-# ALONE - the 10%-of-frames condition was never combined in, which is why it flagged 74%
-# of pockets. A pocket is transient only if it is BOTH closed for a meaningful share of
-# the trajectory AND closed in a sustained run rather than in scattered single frames:
-#
-#     true transient  =  transient (>= 10% of frames at zero)
-#                        AND max_consecutive_zero_frames >= MIN_CONSEC_ZEROS
-#
-# Both input columns are already in pocket_analysis_summary.csv, so this is derived here
-# rather than requiring the pipeline to be rerun. Set DERIVE_TRANSIENCY = False to use
-# the stored column instead.
+#     transient  =  (n_zero_frames >= MIN_ZERO_FRACTION * N_FRAMES)
+#                    AND (max_consecutive_zero_frames >= MIN_CONSEC_ZEROS)
+# DERIVE_TRANSIENCY = False uses the stored `transient` column (MIN_CONSEC_ZEROS=50) instead.
 DERIVE_TRANSIENCY = True
-MIN_CONSEC_ZEROS = 50
-COL_FRAC_TRANSIENT = "transient"                     # the >= 10% of frames at zero flag
+MIN_CONSEC_ZEROS = 15
+MIN_ZERO_FRACTION = 0.10
+N_FRAMES = 1000
+COL_ZERO_FRAMES = "n_zero_frames"
 COL_CONSEC_ZEROS = "max_consecutive_zero_frames"
-STAB_COL = "true_transient"                          # used when DERIVE_TRANSIENCY is False
+STAB_COL = "transient"
 
 ALLOSTERIC_ONLY = True
 
@@ -58,10 +51,7 @@ PANEL_TITLES = {"size": "Pocket size", "stability": "Stability",
 
 BAR_H = 0.34
 BAR_OFF = 0.19
-TITLE_PAD = 10                        # one pad for every panel -> titles line up
-# panel D shows WHICH size classes gained/lost, coloured by the viridis category
-# colours. js_distance in pocketome_metrics summarises the same shift as a single
-# number - kept for the results text, deliberately not plotted.
+TITLE_PAD = 10
 
 # ---------------------------------------------------------------- data prep
 def load_pockets():
@@ -71,32 +61,30 @@ def load_pockets():
         df = df[~df[COL_ORTHO].astype(bool)]
     return df
 
-def _median_over_reps(df, group_col, levels):
-    """count per replicate, then median across replicates -> {(pdb, state): {level: n}}"""
-    per_rep = (df.groupby([COL_PDB, COL_STATE, COL_REP, group_col], observed=True)
-                 .size().rename("n").reset_index())
-    med = (per_rep.groupby([COL_PDB, COL_STATE, group_col], observed=True)["n"]
-                  .median().reset_index())
+def _representative_rep_counts(df, group_col, levels, rep_map):
+    """breakdown by group_col, read off the representative replicate for each (pdb, state) --
+    see pocketome_metrics.representative_replicate()."""
     out = {}
-    for (pdb, state), grp in med.groupby([COL_PDB, COL_STATE]):
-        counts = dict(zip(grp[group_col], grp["n"]))
-        out[(pdb, state)] = {lv: counts.get(lv, 0.0) for lv in levels}
+    for (pdb, state), rep in rep_map.items():
+        sub = df[(df[COL_PDB] == pdb) & (df[COL_STATE] == state) & (df[COL_REP] == rep)]
+        counts = sub[group_col].value_counts()
+        out[(pdb, state)] = {lv: float(counts.get(lv, 0.0)) for lv in levels}
     return out
 
-def size_counts(df):
-    return _median_over_reps(df, COL_CAT, ts.CATEGORIES)
+def size_counts(df, rep_map):
+    return _representative_rep_counts(df, COL_CAT, ts.CATEGORIES, rep_map)
 
 def transient_mask(df):
     """boolean transiency per pocket - see the TRANSIENCY note at the top of this file"""
     if not DERIVE_TRANSIENCY:
         return df[STAB_COL].astype(bool)
-    return (df[COL_FRAC_TRANSIENT].astype(bool)
+    return ((df[COL_ZERO_FRAMES] >= MIN_ZERO_FRACTION * N_FRAMES)
             & (df[COL_CONSEC_ZEROS] >= MIN_CONSEC_ZEROS))
 
-def stability_counts(df):
+def stability_counts(df, rep_map):
     df = df.copy()
     df["_stab"] = np.where(transient_mask(df), "transient", "stable")
-    return _median_over_reps(df, "_stab", ["stable", "transient"])
+    return _representative_rep_counts(df, "_stab", ["stable", "transient"], rep_map)
 
 # ---------------------------------------------------------------- drawing
 def _row_frame(ax, n_row, genes):
@@ -178,9 +166,10 @@ def figure3(out_file=None):
     genes = [gene_map[p] for p in pdb_order]
     n_row = len(pdb_order)
 
-    size, stab = size_counts(df), stability_counts(df)
-    dcount = pm.delta_pocket_count(df, pdb_order, COL_PDB, COL_STATE, COL_REP)
-    d_deltas = pm.delta_category_fraction(df, pdb_order, COL_PDB, COL_STATE, COL_CAT)
+    rep_map = pm.representative_replicate(df, COL_PDB, COL_STATE, COL_REP)
+    size, stab = size_counts(df, rep_map), stability_counts(df, rep_map)
+    dcount = pm.delta_pocket_count(df, pdb_order, COL_PDB, COL_STATE, COL_REP, rep_map)
+    d_deltas = pm.delta_category_fraction(df, pdb_order, COL_PDB, COL_STATE, COL_CAT, COL_REP, rep_map)
 
     enabled = [key for key in ("size", "stability", "delta_count", "delta_class")
                if PANELS.get(key)]
@@ -209,6 +198,7 @@ def figure3(out_file=None):
     if "delta_count" in axes:
         ts.diff_barh(axes["delta_count"], np.nan_to_num(dcount), genes,
                      ts.nice_max(dcount, 2))
+        axes["delta_count"].tick_params(axis="y", which="minor", length=0)
     if "delta_class" in axes:
         draw_category_delta(axes["delta_class"], d_deltas, pdb_order, genes)
 

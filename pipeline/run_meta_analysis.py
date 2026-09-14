@@ -3,19 +3,9 @@ apo/holo comparison (2.2) for apo, holo and the combined run -- the same recipe 
 step2_pocket_analysis.ipynb, as a single script for batch/SLURM use. Requires Step 1
 (pipeline/analysis_pipeline.py) to have already finished for every replicate.
 
-Step 2.1 always parses every PDB ID -- all_pockets/pocket_summary are meant to be the complete
-dataset, regardless of what any one Global ID run is scoped to.
-
-Step 2.2 (Global ID clustering) defaults to conf.REPRESENTATIVE_PDB_IDS (one PDB ID per gene)
-rather than every PDB ID, because clustering is meant to answer a specific, scoped research
-question -- comparing apo vs holo, comparing triplicate replicates, or (this default's purpose)
-showcasing Global ID conservation/divergence across a biologically diverse set of genes -- not
-an unscoped run across every solved structure of the same receptor, which mixes redundant
-near-duplicates into one run rather than a deliberate comparison. (It also keeps memory
-tractable: clustering the full 26-PDB-ID dataset needs 100+GB and has OOM-killed a node with
-anon-rss over 230GB -- a consequence of an unscoped run, not the reason to scope one.) Pass
---pdb-ids to cluster a different subset, or --all-pdb-ids to explicitly opt into the unscoped,
-memory-heavy run across everything.
+Step 2.1 always parses every PDB ID. Step 2.2 (Global ID clustering) defaults to
+conf.REPRESENTATIVE_PDB_IDS; pass --pdb-ids for a different subset, or --all-pdb-ids
+for every PDB ID.
 """
 import argparse
 import os
@@ -48,6 +38,12 @@ def parse_args():
                               "the same receptor, and needs ~100+GB RAM for Step 2.2 (see module "
                               "docstring); has OOM-killed a 230GB+ node. Mutually exclusive with "
                               "--pdb-ids.")
+    parser.add_argument('--fresh-parse', action='store_true',
+                         help="Ignore/overwrite pipeline.pocket_dataframes' "
+                              "_checkpoint_raw_all_pockets.parquet and re-read every replicate "
+                              "from scratch, instead of reusing a checkpoint left by a prior "
+                              "(possibly crashed) run. Use this after Step 1 output actually "
+                              "changes -- otherwise the checkpoint (when present) is stale data.")
     args = parser.parse_args()
     if args.pdb_ids and args.all_pdb_ids:
         parser.error("--pdb-ids and --all-pdb-ids are mutually exclusive")
@@ -70,7 +66,8 @@ def main():
               f"pockets/ output (every PDB ID) -> {saving_loc}")
         with run_summary.stage(*run_summary.AGGREGATE_KEY, 'meta_analysis'):
             tables = pdf.build_pocket_dataframes(pocket_dirs, saving_loc=saving_loc, isovalue=isovalue,
-                                                 bw_file_loc=bw_file_loc, pdb_file_loc=pdb_file_loc)
+                                                 bw_file_loc=bw_file_loc, pdb_file_loc=pdb_file_loc,
+                                                 use_raw_checkpoint=not args.fresh_parse)
 
         print(f"[Step 2.2] isovalue={isovalue}: assigning Global IDs ({', '.join(args.states)}) "
               f"scoped to {'every PDB ID' if args.pdb_ids is None else args.pdb_ids} -> {gid_root}")

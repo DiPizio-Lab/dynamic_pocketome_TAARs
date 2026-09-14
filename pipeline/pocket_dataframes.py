@@ -320,15 +320,7 @@ def _add_largest_pocket_flags(df, volume_col='interpolated_pock_volume'):
 
 
 def _add_volume_category(df, volume_col='interpolated_pock_volume'):
-    """median_pock_volume_all/_open and volume_category, mapped onto every row of a pocket
-    (not just its first frame) so all_pockets stays self-sufficient for per-frame filtering.
-    apo runs start from the holo conformation, so a first-frame volume (and any category
-    derived from it) is biased towards holo -- volume_category uses the trajectory median
-    instead. Two medians are kept because they answer different questions: _all averages in
-    the closed (zero-volume) frames too (time-averaged size), _open only the frames where the
-    pocket is actually open (its geometry when open). volume_category uses _open: transiency
-    already has its own column, so letting absence leak into the size channel would make
-    'Small' mean either tiny or mostly shut."""
+    """median_pock_volume_all/_open and volume_category, mapped onto every row of a pocket."""
     median_all = df.groupby('ID')[volume_col].median()
     median_open = df.loc[df[volume_col] > 0].groupby('ID')[volume_col].median()
     df['median_pock_volume_all'] = df['ID'].map(median_all)
@@ -339,21 +331,44 @@ def _add_volume_category(df, volume_col='interpolated_pock_volume'):
 
 def build_pocket_dataframes(pocket_dirs, saving_loc=conf.META_ANALYSIS_DIR, isovalue=ISOVALUE,
                             min_atoms=MIN_ATOMS, formats=('csv', 'parquet'), make_plots=True,
-                            bw_file_loc=None, pdb_file_loc=None, verbose=True):
+                            bw_file_loc=None, pdb_file_loc=None, verbose=True,
+                            use_raw_checkpoint=True):
     """Runs the full Step 2.1 pipeline and writes all_pockets / pocket_summary (+
     orthosteric_perframe_volumes.csv). Returns {'all_pockets', 'pocket_summary',
     'transient_dict'} for immediate reuse (e.g. from a notebook) without re-reading from disk.
-    """
+
+    use_raw_checkpoint (default True): cache the raw, pre-identity-columns `all_pockets` merge --
+    the output of the expensive part, reading every one of `pocket_dirs` (156 replicates takes
+    ~2h over the shared mount) -- to `{saving_loc}/_checkpoint_raw_all_pockets.parquet`, and
+    reuse it on a later call instead of re-reading from disk. This means a failure or retry in
+    any of the cheap, in-memory work after the read (identity columns, orthosteric flag, ...)
+    doesn't force paying the full ~2h read again. Caution: this does NOT detect if pocket_dirs'
+    underlying files changed since the checkpoint was written (e.g. Step 1 was re-run) -- delete
+    `_checkpoint_raw_all_pockets.parquet` (or pass use_raw_checkpoint=False) after any real
+    change to Step 1 output."""
     os.makedirs(saving_loc, exist_ok=True)
+    raw_checkpoint_path = os.path.join(saving_loc, '_checkpoint_raw_all_pockets.parquet')
 
-    parser = PocketFileParser(pocket_dirs, isovalue=isovalue, saving_loc=saving_loc,
-                              min_atoms=min_atoms, verbose=verbose)
-    result_dict, pockets_to_drop = parser.pock_file_parser()
+    if use_raw_checkpoint and os.path.exists(raw_checkpoint_path):
+        print(f'CHECKPOINT: loading raw pocket read from {raw_checkpoint_path} instead of '
+             f're-reading {len(pocket_dirs)} replicates -- delete this file (or pass '
+             f'use_raw_checkpoint=False) if Step 1 output has changed since it was written.')
+        all_pockets = pd.read_parquet(raw_checkpoint_path)
+    else:
+        parser = PocketFileParser(pocket_dirs, isovalue=isovalue, saving_loc=saving_loc,
+                                  min_atoms=min_atoms, verbose=verbose)
+        result_dict, pockets_to_drop = parser.pock_file_parser()
 
-    intpol_descr_df = parser.interpolation_volume(result_dict['descriptor_df'],
-                                                   col_to_interpolate=['pock_volume'])
-    all_pockets = pd.merge(result_dict['dummy_atom_df'], intpol_descr_df,
-                           on=['ID', 'pocket_number', 'prj', 'rep', 'isovalue'], how='outer')
+        intpol_descr_df = parser.interpolation_volume(result_dict['descriptor_df'],
+                                                       col_to_interpolate=['pock_volume'])
+        all_pockets = pd.merge(result_dict['dummy_atom_df'], intpol_descr_df,
+                               on=['ID', 'pocket_number', 'prj', 'rep', 'isovalue'], how='outer')
+        if use_raw_checkpoint:
+            all_pockets.to_parquet(raw_checkpoint_path)
+            print(f'CHECKPOINT: saved raw pocket read to {raw_checkpoint_path} '
+                 f'({len(all_pockets)} rows) -- a retry from here will load this instead of '
+                 f're-reading {len(pocket_dirs)} replicates.')
+
     all_pockets = _add_identity_columns(all_pockets)
     all_pockets = _add_orthosteric_flag(all_pockets, saving_loc)
     all_pockets = _add_largest_pocket_flags(all_pockets)

@@ -9,17 +9,7 @@ import os
 
 
 def find_external_root(relative_suffix):
-    """First existing /mnt/<share>/<relative_suffix> (or /mnt/<share>/<subshare>/<relative_suffix>,
-    one directory level deeper) -- for raw external source trees (apo_holo_analysis's own
-    simulation output, the K_rienaecker holo source) that live on a shared drive mounted under a
-    DIFFERENT top-level path on different machines: this interactive workstation sees
-    /mnt/cpm_crienaecker/Z/..., the SLURM compute nodes see /mnt/mmlab_shared/... instead -- same
-    underlying share, different local mount name. Searching every top-level /mnt/* entry (and one
-    level deeper) means the code adapts to whichever machine runs it instead of hardcoding one
-    machine's mount name, which breaks as soon as a job lands on a different node.
-    Raises FileNotFoundError (loudly, immediately, with the hostname) rather than returning None
-    if nothing matches -- a raw source path silently resolving to nothing is exactly the kind of
-    bug that should never fail quietly this far upstream of the actual computation."""
+    """First existing /mnt/<share>/<relative_suffix> or /mnt/<share>/<subshare>/<relative_suffix>."""
     candidates = sorted(glob.glob(f"/mnt/*/{relative_suffix}")) + \
         sorted(glob.glob(f"/mnt/*/*/{relative_suffix}"))
     for candidate in candidates:
@@ -60,9 +50,7 @@ def results_dir_for(curr_proj):
 
 def aligned_paths_for(curr_proj, curr_rep, trajectory_ext):
     """(aligned_top.pdb, aligned_traj.<trajectory_ext>) paths written by
-    PreProcess.align_to_reference for a given project + replicate -- the single place this
-    naming convention is resolved, so preprocessing.py / basic_analysis.py / pocket_analysis.py
-    can't drift out of sync with each other about where these files live."""
+    PreProcess.align_to_reference for a given project + replicate."""
     base = os.path.join(results_dir_for(curr_proj), curr_proj, curr_rep)
     return os.path.join(base, 'aligned_top.pdb'), os.path.join(base, f'aligned_traj.{trajectory_ext}')
 
@@ -75,41 +63,18 @@ META_ANALYSIS_DIR = os.path.join(META_ANALYSIS_ROOT, "across_genes")
 
 # One PDB ID per gene (see reference_data/hard_coded_gene_dict.txt): 8ITF -> mTAAR9,
 # 8JLJ -> mTAAR1, 8JLR -> hTAAR1, 8PM2 -> mTAAR7f.
-#
-# Global ID clustering (Step 2.2) is meant to answer a specific, scoped research question --
-# e.g. comparing apo vs holo states of one receptor, comparing its triplicate MD replicates
-# against each other, or (this subset's purpose) showcasing Global ID conservation/divergence
-# across a biologically diverse set of genes. Clustering pockets across every solved structure
-# of the *same* receptor indiscriminately isn't itself a meaningful comparison -- it mixes
-# redundant near-duplicate structures into the same run rather than the deliberate, one-receptor-
-# per-gene comparison this subset represents. (It also happens to keep Global ID clustering's
-# in-memory working set tractable -- clustering the full 26-PDB-ID dataset needs 100+GB and has
-# OOM-killed a node with anon-rss over 230GB -- but that's a consequence of choosing a scoped
-# subset, not the reason to choose one.)
-#
-# Used as the default `pdb_ids=` passed to global_id_and_comparison.run_global_id_states() (Step
-# 2.2 only) -- NOT to pipeline.pocket_dataframes.pocket_dirs_for()/build_pocket_dataframes()
-# (Step 2.1), which always parses every PDB ID so all_pockets/pocket_summary stay the complete
-# dataset. Filter those tables by this same list (the `pdb_id` column) to see exactly what a
-# Global ID run scoped to it was clustering.
+# Default `pdb_ids=` for global_id_and_comparison.run_global_id_states() (Step 2.2 only).
 REPRESENTATIVE_PDB_IDS = ['8ITF', '8JLJ', '8JLR', '8PM2']
 
 # Step 1's per-replicate pocket-search output subdirectory name.
 POCKETS_DIRNAME = "pockets"
 
-# Isovalues the whole pipeline runs pocket detection at. mdpocket/ATClus pocket numbering
-# (p01, p02, ...) restarts independently per isovalue, so a shared pocket number between two
-# isovalues is not reliably the same physical pocket -- Global ID clustering (Step 2.2) must
-# never compare pockets across isovalues. To guarantee that, every stage gets a fully separate
-# output tree per isovalue: a single isovalue keeps the flat legacy layout everywhere; more than
-# one adds an isovalue_<X.X> subdirectory to every stage's output (see isovalue_subpath()).
+# Isovalues the whole pipeline runs pocket detection at.
 ISOVALUES = [3.0]
 
 
 def require_float_isovalues(isovalues):
-    """Raises TypeError unless every isovalue is a float (3.0, not 3) -- an int silently breaks
-    pock_file_parser()'s on-disk filename matching (round-trips through numpy.float64 and picks
-    up a spurious trailing '_0', so 'iso_3-out-*.pdb' is never found)."""
+    """Raises TypeError unless every isovalue is a float (3.0, not 3)."""
     bad = [v for v in isovalues if not isinstance(v, float)]
     if bad:
         raise TypeError(f"isovalues must all be floats (e.g. 3.0, not 3): got {bad!r}")
@@ -121,8 +86,7 @@ def _isovalue_dirname(isovalue):
 
 
 def isovalue_subpath(base_dir, isovalue, isovalues=ISOVALUES):
-    """base_dir, or base_dir/isovalue_<X.X> when isovalues has more than one entry -- the
-    flat/split rule shared by every stage's output layout."""
+    """base_dir, or base_dir/isovalue_<X.X> when isovalues has more than one entry."""
     return base_dir if len(isovalues) <= 1 else os.path.join(base_dir, _isovalue_dirname(isovalue))
 
 

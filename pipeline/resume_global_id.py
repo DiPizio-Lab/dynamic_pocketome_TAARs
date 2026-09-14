@@ -1,27 +1,13 @@
 """Re-runs Step 2.2 (Global ID clustering) alone, loading Step 2.1's already-written
 all_pockets/pocket_summary tables from disk instead of re-parsing pockets/ output from scratch.
 
-For when a previous `python pipeline/run_meta_analysis.py` run finished Step 2.1 (checkpointed
-'meta_analysis: OK' in logs/pipeline_summary.csv) but died or got stuck partway through Step
-2.2 (global_id stuck on RUNNING) -- Step 2.1's ~1-2 hour parse doesn't need repeating just to
-retry the clustering.
+Verifies the loaded tables cover every replicate get_project_list() expects before running.
+Pass --skip-completeness-check to bypass this.
 
-Before touching anything, verifies the loaded tables actually cover every replicate
-get_project_list() expects (same check build_pipeline_summary.py's backfill_aggregate() does
-for the checkpoint CSV) -- reusing a stale or partial table would silently produce a wrong
-Global ID run with no error to show for it. Pass --skip-completeness-check to bypass this (e.g.
-deliberately testing against a subset). This check is about all_pockets/pocket_summary staying
-the complete dataset -- separate from --pdb-ids below, which scopes the clustering itself.
+Defaults Global ID clustering to conf.REPRESENTATIVE_PDB_IDS. Pass --pdb-ids for a different
+subset, or --all-pdb-ids for every PDB ID.
 
-Like run_meta_analysis.py, defaults Global ID clustering to conf.REPRESENTATIVE_PDB_IDS (one PDB
-ID per gene) rather than every PDB ID -- clustering is meant to answer a specific, scoped
-research question (apo vs holo, triplicate replicates, or cross-gene Global ID conservation),
-not an unscoped run across every solved structure of the same receptor. Pass --pdb-ids for a
-different subset, or --all-pdb-ids for the unscoped, memory-heavy run (needs ~100+GB+ RAM; has
-OOM-killed a 230GB+ node).
-
-Run this as `python pipeline/resume_global_id.py`, not from inside scripts/ -- see
-build_pipeline_summary.py's docstring for why.
+Run this as `python pipeline/resume_global_id.py`, not from inside scripts/.
 """
 import argparse
 import os

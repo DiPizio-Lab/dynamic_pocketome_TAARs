@@ -39,6 +39,7 @@ __pycache__/
 *nohup.out
 /logs/
 /0_zenodo_MD/
+/0_zenodo_pocketome/
 taar_paper_figures/logs/
 
 # Internal tooling / raw-data handling, not part of the published pipeline -- both read

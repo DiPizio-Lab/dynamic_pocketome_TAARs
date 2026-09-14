@@ -447,9 +447,7 @@ class PocketAnalysis:
             conf.require_float_isovalues(). mdpocket's first run (the density/frequency grid) is
             isovalue-independent and runs once, shared, in self.pocket_dir; extraction/separation/
             description then run once per isovalue, each isovalue getting its own
-            self.pocket_dir/isovalue_<X.X> subdirectory (conf.isovalue_subpath()) so that no two
-            isovalues' pockets are ever numbered or clustered together downstream. A single
-            isovalue keeps the flat self.pocket_dir layout, unchanged from before this split."""
+            self.pocket_dir/isovalue_<X.X> subdirectory (conf.isovalue_subpath())."""
         isovalues = conf.require_float_isovalues(conf.ISOVALUES if isovalues is None else isovalues)
         base_pocket_dir = self.pocket_dir
         state, pdb_id = run_summary.parse_experiment(self.curr_proj)
