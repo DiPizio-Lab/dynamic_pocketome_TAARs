@@ -16,11 +16,11 @@ blender
 blender_global_id_prep.py
 slurm
 taar_paper_figures/calibrate_pocket_radii.py
+taar_paper_figures/logs/
 
 __pycache__/
 *.pyc
 *.egg-info/
-
 *.blend
 *.blend1
 *.MNSession
@@ -39,8 +39,11 @@ __pycache__/
 *nohup.out
 /logs/
 /0_zenodo_MD/
+/0_GPCRmd_example
 /0_zenodo_pocketome/
 taar_paper_figures/logs/
+build_pocketome_zenodo_export.py
+build_zenodo_export.py
 
 # Internal tooling / raw-data handling, not part of the published pipeline -- both read
 # from external, non-public source trees outside this repo.

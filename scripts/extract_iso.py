@@ -5,24 +5,19 @@ import sys, os
 def extract_iso_pdb(grid_file, output_filename, iso_value):
     """Using mdpocket's functionality to extract a PDB file of the wanted isovalue"""
     f = open(grid_file, "r")
-    # get the axis that shows the most variation during the trajectory, this will be the leading axis
-    # read the header - here is an example
     header = ""
     tmp = f.readline()
     while tmp[0] != "o":
         header = header + tmp
         tmp = f.readline()
-    # print header
-    # read the grid size
+
     r = re.compile('\w+')
     gsize = r.findall(tmp)
     gsize = [int(gsize[-3]), int(gsize[-2]), int(gsize[-1])]
-    # print gsize
-    # read the origin of the system
+
     line = f.readline().split()
     origin = [float(line[-3]), float(line[-2]), float(line[-1])]
-    # print origin
-    # read grid space
+
     line = f.readline().split()
     deltax = [float(line[-3]), float(line[-2]), float(line[-1])]
     line = f.readline().split()
@@ -33,7 +28,6 @@ def extract_iso_pdb(grid_file, output_filename, iso_value):
     # pay attention here, this assumes always orthogonal normalized space, but normally it should be ok
     delta = npy.array([deltax[0], deltay[1], deltaz[2]])
 
-    # read the number of data
     f.readline()
     r = re.compile('\d+')
     n_entries = int(r.findall(f.readline())[2])

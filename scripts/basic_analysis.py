@@ -1,4 +1,5 @@
-""""this is a script for xxxx"""
+""""This script stores the BasicAnalysis object used during the first step of the pocketome analysis pipeline.
+It's methods perform geometric analysis (RMSD, RMSF)."""
 import pandas as pd
 from pathlib import Path
 import os
@@ -7,13 +8,9 @@ import numpy as np
 import time
 import MDAnalysis as mda
 from MDAnalysis.analysis import rms
-import math
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import statistics
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from scripts import logging as log
 
@@ -22,8 +19,7 @@ pd.set_option('expand_frame_repr', False)
 
 
 class BasicAnalysis:
-    """should store methods for RMSD, RMSF and pairwise distances of given nested_list, mandatrory method: alignment?
-    (alternatively, alignment iun main wrapper / as helper function), """
+    """2 main methods and 2 plotting methods to perform RMSD and RMSF calculation and visualisation"""
 
     def __init__(self, topology=None, trajectory=None, curr_proj='', curr_rep='', verbose=False, show_plots=False):
         self.topology = topology
@@ -37,9 +33,9 @@ class BasicAnalysis:
         """creates line plot using matplotlib for RMSD, RMSF style plots; hidden because called by other methods"""
         angstrom_sign = r'$\AA$'
         alpha = 1
-        lw = 1.2  # float - linewidth of line plot
-        fontsize = 15  # float - fontsize x and y label
-        pad = 30  # float - pad of title, and (x,y) labels
+        lw = 1.2  # linewidth of line plot
+        fontsize = 15  # fontsize x and y label
+        pad = 30  # pad of title, and (x,y) labels
         if saving_loc is None:
             saving_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep, 'plots')
         else:
@@ -105,8 +101,6 @@ class BasicAnalysis:
         The function supports customizable selection of atoms, weighting of the RMSD calculation and
         verbose output for detailed logging.
 
-        Parameters:
-        -----------
         trj_period_step_stride : dictionary
             A dictionary containing the trajectory period, timestep, and stride of the trajectory to be analyzed.
             This is used to determine the time in nanoseconds for human-readable plotting.
@@ -142,7 +136,7 @@ class BasicAnalysis:
             A tuple of two elements where the first element is a reference topology file (str) and the second
             element is a reference trajectory file. The RMSD will be calculated relative to this reference. If
             both elements are None, the RMSD is calculated using the previously saved reference universe topology in
-            the resultsfolder. Default is (None, None).
+            the results folder. Default is (None, None).
     """
 
         if saving_loc is None:
@@ -214,10 +208,6 @@ class BasicAnalysis:
         df_rmsd = pd.DataFrame(rmsd.rmsd, columns=col_names)
 
         if icl3_free_selection is not None:
-            # Standalone self-fit: superpose and report using ONLY the ICL3-free selection,
-            # against frame 0 of the SAME (already pre-aligned) universe -- deliberately NOT a
-            # groupselection off the `selection` fit above, so ICL3's flexibility never
-            # contaminates this metric's alignment. See BasicAnalysis.calc_rmsd docstring.
             icl3_rmsd = rms.RMSD(univ, univ, select=icl3_free_selection, ref_frame=0,
                                  verbose=self.verbose).run()
             df_rmsd['RMSD of CA without ICL3 in Angström'] = icl3_rmsd.rmsd[:, 2]
@@ -297,12 +287,3 @@ class BasicAnalysis:
         log.log(f'INFO: Calculating the RMSF took {round((t1 - t0), 3)} seconds // '
                 f'{round(((t1 - t0) / 60), 3)} minutes \n')
 
-    def calc_pairwise_distances(self):
-        """use Alessandros backbone for pairwise distances calculations"""
-        # TODO: implement pairwise distance calculations
-        print('work to do')
-
-    def check_equilibration_temp_pressure(self):
-        """checking temperature and pressure of equilibration phase"""
-        # TODO: implement equilibration checks
-        print('work to do')

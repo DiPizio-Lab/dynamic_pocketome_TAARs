@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import time
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from scripts import extract_iso as iso
 from scripts import logging as logger
@@ -25,18 +25,10 @@ import glob
 pd.set_option('expand_frame_repr', False)
 working_dir = os.getcwd()
 
-# TODO: xtc dcd check
-
 
 def _copy_executable(src, dst):
-    """shutil.copyfile (data only) + best-effort chmod +x -- for the atclus binary, which is
-    run as ./atclus right after being copied into place (see _mdpocket_run_dbscan_alternative).
-    shutil.copy's implicit copymode() step raises EPERM on this dataset's CIFS output mount
-    (nounix, file_mode/dir_mode fixed by the mount options -- there is no real per-file Unix
-    mode for the SMB server to set, so any chmod there is rejected). The chmod here is
-    best-effort so this still works unchanged on a normal POSIX filesystem, where it actually
-    restores the execute bit that copyfile alone (unlike shutil.copy) does not carry over; on
-    the CIFS mount it's a no-op since every file already shows up as 0777 regardless."""
+    """shutil.copyfile (data only) + best-effort chmod +x - for the atclus binary, which is
+    run as ./atclus right after being copied into place."""
     shutil.copyfile(src, dst)
     try:
         mode = os.stat(dst).st_mode
@@ -115,7 +107,7 @@ class PocketAnalysis:
 
     def _extract_iso_mdpocket(self, isovalue, density, grid_dir=None):
         """Using the extractIsoPdb.py included in mdpocket to save a PDB file of specific Isovalues.
-        grid_dir: directory to read the (isovalue-independent) density/frequency grid from --
+        grid_dir: directory to read the (isovalue-independent) density/frequency grid from -
         defaults to self.pocket_dir. The output PDB always goes to self.pocket_dir, which
         pocket_search()'s per-isovalue loop may have pointed at an isovalue_<X.X> subdirectory,
         so a run split across several isovalues still reads the one grid computed once for all
@@ -536,10 +528,10 @@ class PocketAnalysis:
 
         base_pocket_dir_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep,
                                             base_pocket_dir)
-        # IV: extraction/separation/description, once per isovalue -- each isovalue gets its own
+        # IV: extraction/separation/description, once per isovalue - each isovalue gets its own
         # self.pocket_dir (flat base_pocket_dir if there's only one isovalue, else an
         # isovalue_<X.X> subdirectory of it), so isovalues are never mixed downstream. The grid
-        # computed once above (in base_pocket_dir) is shared -- read explicitly from there via
+        # computed once above (in base_pocket_dir) is shared - read explicitly from there via
         # grid_dir regardless of which isovalue's directory self.pocket_dir currently points at.
         for isovalue in isovalues:
             self.pocket_dir = _iso_pocket_dir(isovalue)

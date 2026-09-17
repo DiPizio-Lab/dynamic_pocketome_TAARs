@@ -1,36 +1,24 @@
 """This wrapper runs the replicate_analysis that is used to argument that the global ID works reliably in my paper
-It also is useful to understand the variation in local IDs between replicates"""
-"""
-replicate_analysis_wrapper.py
+It also is useful to understand the variation in local IDs between replicates
 
-Replicate concordance for the reduced example case (4 PDB IDs x 3 replicates,
-ONE state). Run from PyCharm or from a shell script on the cluster.
-
+Replicate concordance for the reduced example case (4 PDB IDs x 3 replicates, 1 state)
 Three blocks, answering three different questions:
-
-    DESCRIPTIVE     - given the global IDs the pipeline assigned, how consistent
+    DESCRIPTIVE       Given the global IDs the pipeline assigned, how consistent
                       is the pocketome across replicates? Counts, occupancy
                       spectrum, Jaccard against a permutation null, rarefaction.
                       This describes the simulations, not the identifier.
 
-    GID SPREAD      - do local pockets sharing a global ID actually sit closer to
+    GID SPREAD        Do local pockets sharing a global ID actually sit closer to
                       each other than to members of other global IDs? A silhouette
                       on pocket centroids. The clustering works on dilated voxel
                       overlap, not on centroid distance, so this is a partly
-                      independent check that the partition is spatially real -
-                      and it needs no replicate agreement to make its point.
+                      independent check that the partition is spatially real.
 
-    THRESHOLD SWEEP - how much of the partition is a consequence of iou_thresh and
+    THRESHOLD SWEEP   How much of the partition is a consequence of iou_thresh and
                       dilation_radius? Re-clusters the same parsed pockets over a
                       parameter grid and counts how many pockets change occupancy
-                      class. The ones that move ARE the ambiguous cases, and are
+                      class. The ones that move are the ambiguous cases, and are
                       few enough to inspect visually.
-
-Nothing about the ID logic is reimplemented. The sweep calls
-voxel_intersection_over_union_global_id directly and uses its return value; the
-point cloud is reshaped once (from Step 2.1's already-parsed all_pockets, not
-re-parsed from the raw pocket files), and every grid point re-clusters that same
-frame.
 
 Outputs land in SAVING_LOC. Both optional blocks have their own RUN_ switch; the
 descriptive block needs only pocket_comparison_table.csv, the spread block adds
@@ -43,34 +31,28 @@ import sys
 import ast
 import time
 import itertools
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
-sys.path.insert(0, os.path.join(REPO_ROOT, "pipeline"))
 from config import OUTPUT_DIR, META_ANALYSIS_ROOT, META_ANALYSIS_DIR
-import global_id_and_comparison as gid
-import pocket_io
+from pipeline import global_id_and_comparison as gid
+from pipeline import pocket_io
 from scripts import run_summary
 import numpy as np
 import pandas as pd
 
-# config
-STATE = "apo"   # "apo" | "holo"
 
+STATE = "apo"   # "apo" | "holo"
 ROOT = META_ANALYSIS_ROOT   # global_ID_{state} run directories and this module's output
 
-# pipeline/global_id_and_comparison.py --subset {state} writes here (was global_ID_{state}_only)
+# pipeline/global_id_and_comparison.py -subset {state} writes here (was global_ID_{state}_only)
 STATE_RESULT_DIR = os.path.join(ROOT, "global_ID_{state}".format(state=STATE))
 SAVING_LOC = os.path.join(STATE_RESULT_DIR, "replicate_analysis")
 THRESHOLD_SWEEP_SCRATCH = os.path.join(SAVING_LOC, "sweep_scratch")
-
 POCKET_COMPARISON_TABLE = os.path.join(STATE_RESULT_DIR, "pocket_comparison_table.csv")
 VOXEL_TABLE = os.path.join(STATE_RESULT_DIR, "global_pockets_IoU_voxel.csv")
 GLOBAL_ID_MAP_FILE = "local_to_globalVoxelID.txt"
-
 RUN_GID_SPREAD = True
 RUN_THRESHOLD_SWEEP = True   # re-clusters once per grid point, not free
-
 # MetaAnalysis parameters - must match the full run these results came from
 ISOVALUE = 3.0
 MIN_ATOMS = 10
@@ -103,7 +85,6 @@ COLUMN_VOXEL_GROUP = "voxel_group_id"
 COLUMN_VOXEL_POCKET = "Pocket ID"
 
 
-# io
 def load_pocket_comparison_table():
     """The finished global ID result for this state: one row per local pocket."""
     pocket_comparison_df = pocket_io.load_table(STATE_RESULT_DIR, "pocket_comparison_table")
@@ -116,9 +97,7 @@ def load_pocket_comparison_table():
 def read_global_id_map(result_dir):
     """
     Parse local_to_globalVoxelID.txt, same format global_id_wrapper_paper.py inverts:
-
         1: ['holo8ITF_1_p02_i3', 'holo8ITF_2_p02_i3', ...]
-
     Returns {local pocket ID: global ID}.
     """
     local_to_global = {}
@@ -139,10 +118,6 @@ def list_experiments(pocket_comparison_df):
     return sorted(experiment_df.itertuples(index=False, name=None))
 
 
-def pocket_dir_for(project, replicate):
-    return POCKET_DIR_TEMPLATE.format(state=STATE, prj=project, rep=replicate)
-
-
 # descriptive
 def counts_per_experiment(pocket_comparison_df):
     """
@@ -154,7 +129,6 @@ def counts_per_experiment(pocket_comparison_df):
             .agg(n_local_pockets=(COLUMN_LOCAL_ID, "size"),
                  n_global_ids=(COLUMN_GLOBAL_ID, "nunique"))
             .reset_index())
-
 
 def replicate_occupancy(pocket_comparison_df):
     """
@@ -177,22 +151,19 @@ def occupancy_weighted_summary(pocket_comparison_df, occupancy_df):
     pocketome look unreliable; weighting by local pocket and by volume shows how
     little of it the unreliable part carries. Report all three columns together or
     the number misleads.
-
-    The three counts live on DIFFERENT units and cannot come from one groupby:
-
+    The three counts live on different units and cannot come from one groupby:
       n_global_ids     one per (project, global ID) - a global pocket in one PDB.
                        These are the rows of occupancy_df, which is already at that
                        granularity, so they are counted there.
       n_local_pockets  one per detected pocket. These are the rows of the merged
                        table, several of which can share a global pocket.
       total_volume     summed over those local pockets.
-
     Previously both counts were taken as .size() on the merged table, which counts
     rows whichever column is named - so n_global_ids silently returned the local
     pocket count and the two were identical by construction. That flattened the
     whole point of the comparison: a global pocket seen in three replicates holds
     at least three local pockets while a singleton holds one, so the core class
-    MUST take a larger share by local pocket than by global pocket.
+    must take a larger share by local pocket than by global pocket.
     """
     merged_df = pocket_comparison_df.merge(
         occupancy_df[[COLUMN_PROJECT, COLUMN_GLOBAL_ID, "n_replicates"]],
@@ -221,8 +192,7 @@ def occupancy_weighted_summary(pocket_comparison_df, occupancy_df):
 
 
 def global_id_composition(pocket_comparison_df):
-    """
-    One row per global ID, to tell a genuinely large conserved pocket from a
+    """One row per global ID, to tell a genuinely large conserved pocket from a
     single-linkage chain. A conserved orthosteric site should appear once per
     experiment in every experiment; a chained cluster shows several members
     inside the SAME replicate, spread far apart.
@@ -248,8 +218,7 @@ def global_id_composition(pocket_comparison_df):
             "max_members_per_experiment": int(members_per_experiment.max()),
             "median_volume": float(global_id_df[COLUMN_VOLUME].median()),
             "max_volume": float(global_id_df[COLUMN_VOLUME].max()),
-            "is_binding_site_fraction": binding_site_fraction,
-        })
+            "is_binding_site_fraction": binding_site_fraction})
     return pd.DataFrame(composition_rows).sort_values("n_members", ascending=False)
 
 
@@ -267,10 +236,8 @@ def jaccard(first_set, second_set):
 
 
 def pairwise_jaccard(global_id_sets):
-    """
-    Every pair of experiments, flagged same-PDB or not. Same-PDB pairs are
-    replicates of one simulation; different-PDB pairs are different receptors.
-    """
+    """Every pair of experiments, flagged same-PDB or not. Same-PDB pairs are
+    replicates of one simulation; different-PDB pairs are different receptors."""
     jaccard_rows = []
     for first_experiment, second_experiment in itertools.combinations(sorted(global_id_sets), 2):
         jaccard_rows.append({
@@ -284,10 +251,8 @@ def pairwise_jaccard(global_id_sets):
 
 
 def jaccard_permutation_null(global_id_sets, random_generator):
-    """
-    How high would Jaccard be if the global IDs carried no information at all?
-
-    Each experiment keeps its own number of global IDs but draws WHICH ones at
+    """How high would Jaccard be if the global IDs carried no information at all?
+    Each experiment keeps its own number of global IDs but draws which ones at
     random from the pool present in the dataset. With 22 IDs in the pool and
     ~12 per experiment, two random draws already share about a third of their
     members by pure arithmetic, so an observed value is only meaningful once
@@ -311,15 +276,12 @@ def jaccard_permutation_null(global_id_sets, random_generator):
 
 
 def rarefaction(pocket_comparison_df):
-    """
-    How many distinct global IDs are recovered from 1, 2 and 3 replicates,
+    """ How many distinct global IDs are recovered from 1, 2 and 3 replicates,
     averaged over every subset of that size?
-
     Only answers "are three replicates enough". If the third replicate still
-    adds many new global IDs the pocketome is undersampled; if it adds almost
+    adds many new global IDs, the pocketome is undersampled; if it adds almost
     none, three replicates already saturate it and the pockets that are missing
-    are not being hidden by sampling depth.
-    """
+    are not being hidden by sampling depth."""
     rarefaction_rows = []
     for project, project_df in pocket_comparison_df.groupby(COLUMN_PROJECT):
         replicates = sorted(project_df[COLUMN_REPLICATE].unique())
@@ -333,8 +295,7 @@ def rarefaction(pocket_comparison_df):
                 "n_replicates_used": subset_size,
                 "mean_global_ids": float(np.mean(subset_counts)),
                 "sd_global_ids": (float(np.std(subset_counts, ddof=1))
-                                  if len(subset_counts) > 1 else 0.0),
-            })
+                                  if len(subset_counts) > 1 else 0.0)})
     return pd.DataFrame(rarefaction_rows)
 
 
@@ -350,22 +311,17 @@ def pocket_centroids(voxel_df):
 
 
 def gid_spread(voxel_df, pocket_comparison_df):
-    """
-    Silhouette of every local pocket against the global ID partition, on centroids.
-
+    """ Silhouette of every local pocket against the global ID partition, on centroids.
         within_distance  - mean distance to the other members of its own global ID
         nearest_other    - the global ID whose members it is on average closest to
         between_distance - that mean distance
         silhouette       - (between - within) / max(between, within)
-
     Positive means the pocket sits closer to its own global pocket than to any
     other, i.e. the partition separates in space. Negative means it would fit some
     other global ID better and is worth looking at. Global IDs with a single member
     get silhouette NaN, since "distance to the rest of my cluster" is undefined.
-
     The clustering itself operates on dilated voxel overlap rather than on centroid
     distance, so this is not simply the clustering criterion restated.
-
     Returns one long dataframe, one row per local pocket.
     """
     centroid_df = pocket_centroids(voxel_df)
@@ -416,8 +372,7 @@ def gid_spread(voxel_df, pocket_comparison_df):
             "between_distance": between_distance,
             "silhouette": silhouette,
             "median_volume": volume_by_local_id.get(local_id, np.nan),
-            COLUMN_BINDING_SITE: binding_site_by_local_id.get(local_id, np.nan),
-        })
+            COLUMN_BINDING_SITE: binding_site_by_local_id.get(local_id, np.nan)})
     return pd.DataFrame(spread_rows)
 
 
@@ -425,7 +380,7 @@ def gid_spread(voxel_df, pocket_comparison_df):
 def point_df_for_sweep():
     """The reshaped point cloud the sweep re-clusters at every grid point, taken straight
     from Step 2.1's already-parsed all_pockets (pipeline/pocket_dataframes.py) instead of
-    re-parsing the raw pocket files a second time -- pock_file_parser() already ran once
+    re-parsing the raw pocket files a second time - pock_file_parser() already ran once
     to produce that output, so this only filters to STATE and reshapes."""
     all_pockets = pocket_io.load_table(META_ANALYSIS_DIR, 'all_pockets')
     state_pockets = all_pockets[all_pockets['state'] == STATE]
@@ -433,11 +388,9 @@ def point_df_for_sweep():
 
 
 def occupancy_class_by_local_id(assignment_df):
-    """
-    Per local pocket: in how many replicates of its own structure does its global ID
+    """Per local pocket: in how many replicates of its own structure does its global ID
     occur? This is the quantity the sweep asks about, since a pocket changing global
-    ID number is meaningless across runs but changing occupancy class is not.
-    """
+    ID number is meaningless across runs but changing occupancy class is not."""
     occupancy = (assignment_df.groupby([COLUMN_PROJECT, COLUMN_GLOBAL_ID])[COLUMN_REPLICATE]
                  .nunique().rename("n_replicates").reset_index())
     merged_df = assignment_df.merge(occupancy, on=[COLUMN_PROJECT, COLUMN_GLOBAL_ID])
@@ -445,18 +398,14 @@ def occupancy_class_by_local_id(assignment_df):
 
 
 def threshold_sweep(pocket_comparison_df):
-    """
-    Re-cluster the same parsed pockets across the iou_thresh x dilation_radius grid
+    """Re-cluster the same parsed pockets across the iou_thresh x dilation_radius grid
     and record what each local pocket's occupancy class becomes.
-
     Global ID numbers are not comparable between grid points, so nothing compares
     them; the comparison is occupancy class, which is label-free. A pocket whose
     class is the same everywhere is robust to the parameter choice; a pocket that
-    moves is genuinely ambiguous and is exactly what should be opened in Blender.
-
+    moves is genuinely ambiguous and is exactly what should be inspected manually.
     The pockets are parsed and reshaped once; each grid point only redoes the
     voxelisation and the graph, which is the cheap part.
-
     Returns one long dataframe, one row per local pocket per grid point.
     """
     os.makedirs(THRESHOLD_SWEEP_SCRATCH, exist_ok=True)
@@ -495,8 +444,7 @@ def threshold_sweep(pocket_comparison_df):
                 COLUMN_LOCAL_ID: local_id,
                 "n_global_ids_this_setting": n_global_ids,
                 "global_id_this_setting": int(global_id_by_local_id_this_setting[local_id]),
-                "occupancy_class": int(occupancy_class),
-            })
+                "occupancy_class": int(occupancy_class)})
 
     sweep_df = pd.DataFrame(sweep_rows)
     sweep_df["reference_occupancy_class"] = sweep_df[COLUMN_LOCAL_ID].map(
@@ -504,7 +452,6 @@ def threshold_sweep(pocket_comparison_df):
     sweep_df["class_changed"] = (sweep_df["occupancy_class"]
                                  != sweep_df["reference_occupancy_class"])
     return sweep_df
-
 
 
 # wrapper
@@ -523,14 +470,9 @@ def replicate_analysis():
     permuted_jaccard = jaccard_permutation_null(global_id_sets, random_generator)
     rarefaction_df = rarefaction(pocket_comparison_df)
 
-    result_tables = {
-        "counts_per_experiment": counts_df,
-        "occupancy": occupancy_df,
-        "occupancy_summary": occupancy_summary_df,
-        "global_id_composition": composition_df,
-        "jaccard_pairs": jaccard_df,
-        "rarefaction": rarefaction_df,
-    }
+    result_tables = {"counts_per_experiment": counts_df, "occupancy": occupancy_df,
+                    "occupancy_summary": occupancy_summary_df, "global_id_composition": composition_df,
+                    "jaccard_pairs": jaccard_df, "rarefaction": rarefaction_df}
 
     spread_df = pd.DataFrame()
     if RUN_GID_SPREAD:

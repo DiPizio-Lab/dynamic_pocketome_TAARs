@@ -25,10 +25,9 @@ def save_table(df, saving_loc, name, formats=('csv', 'parquet'), index=False):
 
 
 def load_table(saving_loc, name, prefer='parquet', **read_kwargs):
-    """Loads {saving_loc}/{name}.parquet if present (default preference -- smaller, faster,
+    """Loads {saving_loc}/{name}.parquet if present (default preference - smaller, faster,
     keeps dtypes), else falls back to {name}.csv. Pass prefer='csv' to flip the preference,
     e.g. when you need a csv-only read_csv kwarg such as skiprows/usecols/dtype.
-
     read_kwargs are forwarded to whichever pandas reader ends up being used.
     """
     order = ('parquet', 'csv') if prefer == 'parquet' else ('csv', 'parquet')
@@ -40,6 +39,6 @@ def load_table(saving_loc, name, prefer='parquet', **read_kwargs):
 
 
 def table_path(saving_loc, name, fmt='parquet'):
-    """Path a table of this name WOULD have in this format, without checking it exists --
+    """Path a table of this name would have in this format, without checking it exists -
     for callers that need to hand a path to something else (e.g. a chunked csv reader)."""
     return os.path.join(saving_loc, f'{name}.{fmt}')

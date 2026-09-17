@@ -4,7 +4,7 @@ A pocket's Global ID is only meaningful within the run that produced it - two po
 only share a Global ID if they were voxel-clustered together, so Global IDs from two different
 subsets are NOT comparable (see match_states() below for the one case where you deliberately
 want to reconcile two separate runs). This script therefore always clusters ONE chosen subset
-of pockets - by state (apo/holo/both-together), gene, and/or PDB ID.
+of pockets by state (apo/holo/both-together), gene, and/or PDB ID.
 
 Reads all_pockets, pocket_summary (pipeline/pocket_io.py, either .csv or .parquet -
 pocket_dataframes.py's output), from config.META_ANALYSIS_DIR by default.
@@ -34,7 +34,7 @@ import plotly.graph_objects as go
 import upsetplot
 from scipy.ndimage import distance_transform_edt
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from scripts import logging as logger
 from pipeline import pocket_io
@@ -44,11 +44,12 @@ from taar_paper_figures import fig2_binding_site as fig2
 
 pd.set_option('display.max_columns', None)
 
-VOXEL_SIZE = 1.0          # A per voxel
+VOXEL_SIZE = 1.0          # Angstroem per voxel
 IOU_THRESH = 0.3          # require >= this IoU to link two pockets into the same global one
 DILATION_RADIUS = 5       # pad each pocket by this many voxels to absorb small shifts
 MIN_CLUSTER_SIZE = 2      # connected components smaller than this are singleton/noise (group 0)
 # defaults tuned against hTAAR1, mTAAR1, mTAAR7f and mTAAR9 overlap
+# (cf. Rienaecker et al.: "Dynamic Pocketome of Trace Amine-Associated Receptors", 2026)
 
 COL_PDB, COL_STATE, COL_REP, COL_CAT, COL_ORTHO = 'pdb_id', 'state', 'rep', 'volume_category', 'is_orthosteric'
 VOL_CATEGORIES = {'Small (<250)': 'small', 'Medium (250-500)': 'medium', 'Large (500-750)': 'large',
@@ -71,8 +72,7 @@ def select_subset(all_pockets, states=None, genes=None, pdb_ids=None):
 def pocket_point_dataframe(df):
     """One row per unique (Pocket ID, x, y, z) alpha-sphere position - the deduplicated point
     cloud that defines each pocket's spatial extent, independent of how many frames it was
-    seen in (all_pockets repeats every point once per frame). This is the only input
-    voxel_intersection_over_union_global_id needs.
+    seen in (all_pockets repeats every point once per frame).
     """
     flat = df[['ID', 'x', 'y', 'z', 'prj', 'rep']].drop_duplicates(subset=['ID', 'x', 'y', 'z']).copy()
     flat = flat.rename(columns={'ID': 'Pocket ID'})
@@ -141,11 +141,8 @@ def voxel_intersection_over_union_global_id(saving_loc, summary_df=None, point_d
     Intersection-over-Union, build a graph (nodes = local pockets, edge = IoU >= iou_thresh),
     and take connected components as Global IDs. Components smaller than min_cluster_size are
     reassigned to their nearest labelled neighbour (1-NN on centroid) rather than left as noise.
-
     Pass either summary_df (all_pockets or a subset of it - pocket_point_dataframe() is run
-    for you) or an already-reshaped point_df (pocket_point_dataframe() output), e.g. to avoid
-    redoing the reshape when clustering the same pockets more than once.
-
+    for you) or an already-reshaped point_df (pocket_point_dataframe() output).
     Returns the point-level dataframe with an added 'voxel_group_id' column (== Global ID).
     Also writes global_pockets_IoU_voxel.csv, local_to_globalVoxelID.txt,
     reduced_local_to_globalVoxelID.csv, and (if make_qc_plot) the QC scatter plots.
@@ -204,7 +201,7 @@ def voxel_intersection_over_union_global_id(saving_loc, summary_df=None, point_d
     pocket_io.save_table(df, saving_loc, 'global_pockets_IoU_voxel', formats=('csv',))
 
     # Kept isovalue-inclusive (== 'Pocket ID', not stripped) so it matches Local ID in
-    # pocket_dataframes.py exactly -- see _add_identity_columns() there for why.
+    # pocket_dataframes.py exactly
     df['Pocket ID local'] = df['Pocket ID']
     df['prj'] = df['Pocket ID local'].str.extract(r'^([^_]+)')
     df['rep'] = df['Pocket ID local'].str.extract(r'_(\d)_')
@@ -245,7 +242,7 @@ def make_pocket_summary(df, local_id_col='Local ID', global_id_col='Global ID',
 
 def annotate_uniqueness(df, prj_col='prj', pocket_id_col='Global ID', id_col='ID', gene_col='gene'):
     """Adds n_replicates_within_prj, unique_in_one_rep, genes_list, n_distinct_genes,
-    unique_to_one_gene - how widely each Global ID is shared across replicates/genes."""
+    unique_to_one_gene. How widely each Global ID is shared across replicates/genes."""
     working_df = df
     working_df[id_col] = working_df[id_col].astype(str)
 
@@ -525,6 +522,7 @@ def match_states(reference_table, target_table, saving_loc, reference_voxel_csv,
     Euclidean distance between the two centroid sets. Both directions are computed and merged
     into one table (direction: 'both' | '<ref>-><target>' | '<target>-><ref>') so a global pocket
     with no reciprocal partner is still reported, not dropped.
+    NOTE: This is used in the article as a proof of concept rather than a recommendation to be used in general.
     """
     os.makedirs(saving_loc, exist_ok=True)
 
@@ -557,19 +555,18 @@ def match_states(reference_table, target_table, saving_loc, reference_voxel_csv,
 
 
 # apo vs holo pocketome comparison
-
 def allosteric_pocketome_table(df, pdb_order):
     """Per PDB: delta_pocket_count, delta_median_volume, JS distance, delta size-class
-    fractions. All computed by taar_paper_figures/pocketome_metrics.py, unmodified."""
-    allo = df[~df[COL_ORTHO].astype(bool)]
-    dcount = pm.delta_pocket_count(allo, pdb_order, COL_PDB, COL_STATE, COL_REP)
-    dvol = pm.delta_median_volume(allo, pdb_order, pdb_col=COL_PDB, state_col=COL_STATE)
-    js_med, js_lo, js_hi = pm.js_per_structure(allo, pdb_order, pdb_col=COL_PDB, state_col=COL_STATE,
+    fractions. All computed by taar_paper_figures/pocketome_metrics.py."""
+    allosteric = df[~df[COL_ORTHO].astype(bool)]
+    delta_count = pm.delta_pocket_count(allosteric, pdb_order, COL_PDB, COL_STATE, COL_REP)
+    delta_vol = pm.delta_median_volume(allosteric, pdb_order, pdb_col=COL_PDB, state_col=COL_STATE)
+    js_med, js_lo, js_hi = pm.js_per_structure(allosteric, pdb_order, pdb_col=COL_PDB, state_col=COL_STATE,
                                                rep_col=COL_REP, cat_col=COL_CAT)
-    dclass = pm.delta_category_fraction(allo, pdb_order, COL_PDB, COL_STATE, COL_CAT)
-    out = pd.DataFrame({'pdb_id': pdb_order, 'delta_pocket_count': dcount, 'delta_median_volume_pct': dvol,
+    delta_sizeclass = pm.delta_category_fraction(allosteric, pdb_order, COL_PDB, COL_STATE, COL_CAT)
+    out = pd.DataFrame({'pdb_id': pdb_order, 'delta_pocket_count': delta_count, 'delta_median_volume_pct': delta_vol,
                         'js_distance_median': js_med, 'js_distance_min': js_lo, 'js_distance_max': js_hi})
-    for cat, col in zip(pm.CATEGORIES, dclass.T):
+    for cat, col in zip(pm.CATEGORIES, delta_sizeclass.T):
         out[f'delta_fraction_{VOL_CATEGORIES[cat]}'] = col
     return out
 
@@ -578,15 +575,15 @@ def orthosteric_site_table(pdb_order, source_loc):
     """Per-PDB median orthosteric-site volume shift, reusing fig2_binding_site's volume_dict/
     delta_volume. The same functions that produce figure 2 panel B. source_loc: Step 2.1's
     saving_loc (default config.META_ANALYSIS_DIR), where orthosteric_perframe_volumes.csv
-    lives - NOT the Global ID run's saving_loc, since this metric doesn't use Global ID at all."""
+    lives"""
 
     df = pd.read_csv(os.path.join(source_loc, 'orthosteric_perframe_volumes.csv'), usecols=['ID', 'rep', fig2.VOL_COL])
     parsed = df['ID'].str.extract(fig2.ID_RE)
     df['state'], df['pdbid'] = parsed[0], parsed[1]
     df = df.dropna(subset=['state', 'pdbid'])
     vol = fig2.volume_dict(df)
-    dvol = fig2.delta_volume(vol, pdb_order)
-    return pd.DataFrame({'pdb_id': pdb_order, 'delta_orthosteric_volume_pct': dvol})
+    delta_vol = fig2.delta_volume(vol, pdb_order)
+    return pd.DataFrame({'pdb_id': pdb_order, 'delta_orthosteric_volume_pct': delta_vol})
 
 
 def run_apo_holo_comparison(pocket_summary_subset, source_loc, saving_loc=None, out=None):
@@ -622,13 +619,12 @@ def run_global_id_states(all_pockets, pocket_summary, states, source_loc, gid_ro
         'apo'  -> apo pockets only,  clustered alone   -> gid_root/global_ID_apo/
         'holo' -> holo pockets only, clustered alone   -> gid_root/global_ID_holo/
         'both' -> apo+holo together, one shared Global ID numbering -> gid_root/global_ID_combined/
-                  (also runs run_apo_holo_comparison() automatically, same as before)
-    None means ['both'] - the old default (a single combined run).
+                  (also runs run_apo_holo_comparison() automatically)
+    None means ['both'] aka a single combined run.
 
     reconcile_apo_holo: if True AND both 'apo' and 'holo' are requested, also runs match_states()
     afterwards to reconcile their independent numberings by nearest pocket centroid, writing
-    gid_root/apo_holo_global_id_mapping/global_id_state_mapping.csv. Off by default - most users
-    running 'apo' and 'holo' separately just want the two independent clusterings; only turn this
+    gid_root/apo_holo_global_id_mapping/global_id_state_mapping.csv. Off by default;  only turn this
     on if you specifically need the cross-run correspondence (their Global IDs are NOT comparable
     without it - a pocket's Global ID is only meaningful within the run that produced it).
 
@@ -636,9 +632,6 @@ def run_global_id_states(all_pockets, pocket_summary, states, source_loc, gid_ro
     only for the 'both' run's apo/holo comparison.
     genes/pdb_ids: same optional filters as select_subset(), applied on top of each state filter.
 
-    Returns {'apo': pocket_comparison_df, 'holo': ..., 'both': ..., 'apo_holo_summary': ...,
-    'mapping': mapping_df} - only the keys actually run are present ('apo_holo_summary' iff
-    'both' ran, 'mapping' iff reconcile_apo_holo=True and both apo and holo ran).
     """
     valid_runs = {'apo', 'holo', 'both'}
     requested = list(dict.fromkeys(states)) if states else ['both']
@@ -686,13 +679,9 @@ def main(states=None, genes=None, pdb_ids=None, saving_loc=None, compare_apo_hol
     clustered SEPARATELY and reconciled afterwards, call select_subset() / assign_global_ids()
     per state and match_states() yourself instead (see the notebook for that recipe).
 
-    isovalue picks which isovalue's all_pockets/pocket_summary to read (see
-    conf.isovalue_meta_analysis_dir()) -- Global ID clustering never compares pockets across
-    isovalues (pocket numbering restarts per isovalue, so a shared local pocket number is not
-    reliably the same physical site), so each isovalue gets a fully separate result. Leaving
-    isovalue=None runs main() once per conf.ISOVALUES entry instead and returns
-    {isovalue: pocket_comparison_df, ...}; with a single-isovalue conf.ISOVALUES (the default),
-    that's just one call with the pre-split flat paths, unchanged from before this split.
+    isovalue picks which isovalue's all_pockets/pocket_summary to read because Global ID clustering never compares
+    pockets across isovalues, so each isovalue gets a fully separate result. Leaving
+    isovalue=None runs main() once per conf.ISOVALUES entry.
     """
     isovalues = conf.require_float_isovalues(conf.ISOVALUES)
     if isovalue is None and len(isovalues) > 1:
@@ -715,7 +704,7 @@ def main(states=None, genes=None, pdb_ids=None, saving_loc=None, compare_apo_hol
 
     if compare_apo_holo:
         if subset['state'].nunique() < 2:
-            print('compare_apo_holo needs both states in the subset -- skipping (states=' f'{states})')
+            print('compare_apo_holo needs both states in the subset - skipping (states=' f'{states})')
         else:
             pocket_summary = pocket_io.load_table(input_loc, 'pocket_summary')
             summary_subset = select_subset(pocket_summary, states=states, genes=genes, pdb_ids=pdb_ids)

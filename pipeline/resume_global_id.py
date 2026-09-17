@@ -1,19 +1,17 @@
 """Re-runs Step 2.2 (Global ID clustering) alone, loading Step 2.1's already-written
 all_pockets/pocket_summary tables from disk instead of re-parsing pockets/ output from scratch.
-
 Verifies the loaded tables cover every replicate get_project_list() expects before running.
-Pass --skip-completeness-check to bypass this.
-
+Pass -skip-completeness-check to bypass this.
 Defaults Global ID clustering to conf.REPRESENTATIVE_PDB_IDS. Pass --pdb-ids for a different
 subset, or --all-pdb-ids for every PDB ID.
-
 Run this as `python pipeline/resume_global_id.py`, not from inside scripts/.
+Just for convenience - usually doesn't have to be run
 """
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from pipeline import pocket_io
 from pipeline.analysis_pipeline import get_project_list
@@ -32,8 +30,8 @@ def _check_complete(pocket_summary, saving_loc):
     if missing:
         raise SystemExit(
             f"pocket_summary loaded from {saving_loc} covers {len(found)}/{len(expected)} "
-            f"replicates -- missing e.g. {sorted(missing)[:5]}. Refusing to run Global ID "
-            f"clustering on incomplete data (pass --skip-completeness-check to override).")
+            f"replicates - missing e.g. {sorted(missing)[:5]}. Refusing to run Global ID "
+            f"clustering on incomplete data (pass -skip-completeness-check to override).")
 
 
 def parse_args():

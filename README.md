@@ -296,7 +296,7 @@ plus the orthosteric binding-site volume shift (from
 A figure package (RMSD heatmaps, binding-site, allosteric
 pocketome, replicate concordance, global-ID heatmap, Blender panel-D renders)
 with its own README (`taar_paper_figures/paper_figures_README.md`) covering
-inputs/outputs & the colour system in detail. NOte that the paper also includes blender renders, which are not included here.
+inputs/outputs & the colour system in detail. Note that the paper also includes blender renders, which are not included here.
 
 ```bash
 python taar_paper_figures/paper_plots.py

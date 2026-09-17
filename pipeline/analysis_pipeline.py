@@ -9,10 +9,8 @@ layout: <state><PDBID>/<rep>/{structure.pdb, structure.psf, traj_wrapped.xtc}), 
 
 Results are written to output/apo_structures/ and output/holo_structures/, mirroring
 the input PDB+rep tree (see config.py). This is the first stage of the pipeline;
-Step 2 (comparative_study.py / complete_pocket_analysis.py) reads its pockets/
-output.
 
-Originally developed for Clarissa Rienäcker's Master's Thesis, analysing TAAR (and
+Originally developed by Clarissa Rienaecker analysing TAAR (and
 OR) MD trajectories with MDAnalysis and fpocket/MDpocket.
 """
 
@@ -22,7 +20,7 @@ import sys
 import time
 import warnings
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from scripts import preprocessing as prepro
 from scripts import basic_analysis
@@ -35,20 +33,12 @@ warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 VERBOSE = True
-SHOW_PLOTS = False  # True: plots are displayed and saved; False: saved only
+SHOW_PLOTS = False
 
-# Simulation timing: input/ is expected to already be at 1 frame = 1 ns (see
-# step0_prepare_clean_input.py, which normalizes raw simulation output -- apo and holo were
-# written at different raw frame frequencies -- into that shape before it ever reaches this
-# pipeline). `stride` is kept here as a knob for anyone whose input isn't pre-normalized, but
-# stays 1 for this dataset: re-striding already-1-ns/frame input would just throw frames away.
+# Simulation timing: input/ is expected to already be at 1 frame = 1 ns `stride` is kept here as a knob for anyone whose
+# input isn't pre-normalized, but stays 1 for this dataset
 TRJ_PERIOD_STEP_STRIDE = {'traj_period': 25000, 'time_step': 4, 'stride': 1}
 STRIDE = TRJ_PERIOD_STEP_STRIDE['stride']
-
-# Binding site & ICL3 residue numbers per gene (NOT the orthosteric/is_binding_site pocket
-# classification, which lives in orthosteric_filter_ligand_based.py and is computed from the
-# ligand centroid per PDB) are read from reference_data/binding_site_residues.txt and
-# reference_data/ICL3_definition.txt by scripts/gene_selections.py.
 
 
 def get_project_list(pdb_ids=None, exclude_pdb_ids=None):
@@ -56,12 +46,12 @@ def get_project_list(pdb_ids=None, exclude_pdb_ids=None):
     replicate under both input structure trees, covering both states for whichever PDB IDs are
     included (bare IDs, e.g. '8ITF', not 'apo8ITF').
 
-    pdb_ids: if given, only these PDB IDs (both apo and holo) -- e.g. a small reproducibility-
+    pdb_ids: if given, only these PDB IDs (both apo and holo) - e.g. a small reproducibility-
     check subset that should be prioritized ahead of the rest.
-    exclude_pdb_ids: if given, every PDB ID EXCEPT these -- the complement of a pdb_ids run, for
+    exclude_pdb_ids: if given, every PDB ID EXCEPT these - the complement of a pdb_ids run, for
     submitting the "everything else" work as a separate, non-overlapping job so the two never
     race on the same replicate's output.
-    Mutually exclusive -- pass at most one."""
+    Mutually exclusive - pass at most one."""
     if pdb_ids is not None and exclude_pdb_ids is not None:
         raise ValueError("pass at most one of pdb_ids / exclude_pdb_ids, not both")
     project_ls = []
@@ -104,13 +94,13 @@ def run_analyses(shard_index=0, num_shards=1, pdb_ids=None, exclude_pdb_ids=None
     """Wrapper calling all per-replicate analysis steps; files are saved and then
     not overwritten if they already exist.
 
-    shard_index/num_shards split project_ls round-robin (project_ls[shard_index::num_shards])
-    so this can be run as several concurrent processes -- e.g. one per SLURM node -- each
+    shard_index/num_shards split project_ls (project_ls[shard_index::num_shards])
+    so this can be run as several concurrent processes (e.g. one per SLURM node) each
     covering a disjoint set of replicates with no coordination needed between them (every
     replicate writes to its own output subtree, see setup_results_folder). Defaults (0, 1)
     run every replicate, unchanged from before sharding existed.
 
-    pdb_ids/exclude_pdb_ids: see get_project_list() -- scope this run to a PDB ID subset (or its
+    pdb_ids/exclude_pdb_ids: see get_project_list() - scope this run to a PDB ID subset (or its
     complement) instead of everything."""
     project_ls = get_project_list(pdb_ids=pdb_ids, exclude_pdb_ids=exclude_pdb_ids)[shard_index::num_shards]
     print(f'Shard {shard_index}/{num_shards}: {len(project_ls)} replicate(s) to process')
@@ -128,12 +118,11 @@ def run_analyses(shard_index=0, num_shards=1, pdb_ids=None, exclude_pdb_ids=None
             gene = gene_sel.gene_for_project(folder_name)
             group_sel = gene_sel.group_selection_for(gene)
 
-            # I: pre-processing -- dry protein, then align to the reference topology
+            # I: pre-processing - dry protein, then align to the reference topology
             with run_summary.stage(state, pdb_id, curr_rep, 'preprocessing'):
                 preprocess_obj = prepro.PreProcess(curr_topol, curr_traj, folder_name, curr_rep, verbose=VERBOSE)
-                preprocess_obj.make_selection_n_save(stride=STRIDE)  # if selection None selects 'protein'
+                preprocess_obj.make_selection_n_save(stride=STRIDE)  # if None selects 'protein'
                 # Note: dry protein is saved, align to ref takes path to saving loc
-                #  (otherwise issues with the number of frames: only 1st frame is returned as AtomGroup)
                 universe_path = os.path.join(results_dir, folder_name, curr_rep, 'dry_prot.xtc')
                 dry_top_path = os.path.join(results_dir, folder_name, curr_rep, 'dry_prot.pdb')
                 preprocess_obj.align_to_reference(reference=curr_topol, universe=(dry_top_path, universe_path))
@@ -147,7 +136,7 @@ def run_analyses(shard_index=0, num_shards=1, pdb_ids=None, exclude_pdb_ids=None
                                              icl3_free_selection=gene_sel.ca_without_icl3_selection_for(gene))
                 basic_analysis_obj.calc_rmsf()
 
-            # III: pocket search (MDpocket) -- runs on the aligned, dry-protein output from step I,
+            # III: pocket search (MDpocket) - runs on the aligned, dry-protein output from step I,
             # not the raw input (which still has solvent/membrane). Records its own
             # pocket_detection/pocket_separation/pocket_characterisation checkpoints internally
             # (see PocketAnalysis.pocket_search), since those are three distinct sub-stages.
@@ -157,8 +146,7 @@ def run_analyses(shard_index=0, num_shards=1, pdb_ids=None, exclude_pdb_ids=None
             pocket_obj.pocket_search()
         except Exception as exc:
             # One experiment's failure must not take down the rest of this shard's replicate
-            # list -- the failing stage already recorded its own ERROR checkpoint (see
-            # run_summary.stage), so here we just log and move on to the next replicate.
+            # list so here we just log and move on to the next replicate.
             message = run_summary.format_exception_message(exc)
             print(f'ERROR: {folder_name}/{curr_rep} failed, skipping to next replicate: {message}')
             logger.log(f'ERROR: {folder_name}/{curr_rep} failed, skipping to next replicate: {message}')
@@ -188,7 +176,7 @@ def parse_args():
 def main():
     args = parse_args()
     t0 = time.time()
-    logger.log("Welcome to MMLab's custom MD Analysis Pipeline! Here is what happened while you had a coffee: \n \n ")
+    logger.log("Welcome to CPM's custom MD Analysis Pipeline! Here is what happened while you had a coffee: \n \n ")
     setup_results_folder()
     run_analyses(shard_index=args.shard_index, num_shards=args.num_shards,
                  pdb_ids=args.pdb_ids, exclude_pdb_ids=args.exclude_pdb_ids)

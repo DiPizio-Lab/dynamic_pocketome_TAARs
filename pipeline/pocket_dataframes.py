@@ -4,18 +4,18 @@ Step 2.1: turns Step 1's per-replicate pockets/ output into two per-pocket dataf
 For every replicate under output/{apo,holo}_structures/<state><PDBID>/<rep>/pockets/ (Step 1
 output), this:
   1. Parses the mdpocket/ATClus dummy-atom PDBs, descriptor files and residue files into one
-     merged per-(pocket, frame, alpha sphere) table -- PocketFileParser.pock_file_parser()
-  2. Interpolates pock_volume across short gaps -- PocketFileParser.interpolation_volume()
-  3. Classifies each pocket as orthosteric/binding-site -- orthosteric_filter_ligand_based.classify_binding_site()
-  4. Classifies each pocket as transient/stable -- consecutive_zeros_transiency.classify_transient()
+     merged per-(pocket, frame, alpha sphere) table - PocketFileParser.pock_file_parser()
+  2. Interpolates pock_volume across short gaps - PocketFileParser.interpolation_volume()
+  3. Classifies each pocket as orthosteric/binding-site - orthosteric_filter_ligand_based.classify_binding_site()
+  4. Classifies each pocket as transient/stable - consecutive_zeros_transiency.classify_transient()
   5. Flags the largest pocket per (state, PDB ID, replicate), and is_largest_and_orthosteric
   6. Derives volume_category from the per-pocket trajectory-median volume (open frames only)
 
 Writes, under saving_loc (default config.META_ANALYSIS_DIR), as BOTH .csv and .parquet
-(pipeline/pocket_io.py -- callers read either through pocket_io.load_table):
-    all_pockets       one row per (pocket, frame, alpha sphere) -- every pocket, every
+(pipeline/pocket_io.py - callers read either through pocket_io.load_table):
+    all_pockets       one row per (pocket, frame, alpha sphere) - every pocket, every
                       experiment, every frame, every alpha-sphere coordinate
-    pocket_summary    one row per pocket (its first frame) -- the same columns, collapsed
+    pocket_summary    one row per pocket (its first frame) - the same columns, collapsed
 Also writes orthosteric_perframe_volumes.csv (csv only, small: all_pockets filtered to
 is_orthosteric), a convenience file taar_paper_figures/fig2_binding_site.py reads directly.
 """
@@ -58,7 +58,7 @@ KEEP_COLS = (['ID', 'Local ID', 'prj', 'rep', 'state', 'pdb_id', 'gene', 'pocket
 class PocketFileParser:
     """Parses one isovalue's worth of mdpocket/ATClus output (dummy-atom PDBs, descriptor
     files, residue files) across many pocket_dirs into merged dataframes. This is the only
-    place that reads the raw pockets/ files -- everything downstream works off its output."""
+    place that reads the raw pockets/ files - everything downstream works off its output."""
 
     def __init__(self, pocket_dirs, isovalue=ISOVALUE, dbscan=DBSCAN, saving_loc='.',
                  min_atoms=MIN_ATOMS, verbose=False):
@@ -71,14 +71,12 @@ class PocketFileParser:
 
     def _normalize_pocket_filenames(self):
         """ATClus/mdpocket always save filenames with the isovalue written as a bare float (e.g.
-        mdpout_dens_iso_3.0-out-01.pdb, mdpout_dens_iso_3.5-out-01.pdb) -- which breaks every
+        mdpout_dens_iso_3.0-out-01.pdb, mdpout_dens_iso_3.5-out-01.pdb) - which breaks every
         downstream dot-free assumption (the -out- search pattern below, and _parse_filename's
         digit-only regex) if left alone. Called first so no filename has a dot anywhere but the
         extension: a non-integer isovalue has its dot replaced with an underscore (iso_3.5 ->
-        iso_3_5); an integer-valued one has the dot AND trailing zero stripped entirely (iso_3.0
-        -> iso_3, matching the "_i3"-style ID convention used everywhere else in the pipeline) --
-        NOT just left as iso_3.0, which is the same string as iso_3 plus a silently-ignored
-        ".0" as far as any dot-free matcher downstream is concerned, so it must actually change."""
+        iso_3_5); an integer-valued one has the dot & trailing zero stripped entirely (iso_3.0
+        -> iso_3, matching the "_i3"-style ID convention used everywhere else in the pipeline)"""
         if not isinstance(self.isovalue, float):
             return
         iso_str = str(self.isovalue)
@@ -277,11 +275,11 @@ class PocketFileParser:
 
 
 def _add_identity_columns(df):
-    """Local ID (per-experiment pocket identifier -- kept isovalue-inclusive, same as ID: pocket
+    """Local ID (per-experiment pocket identifier - kept isovalue-inclusive, same as ID: pocket
     numbering restarts per isovalue within pocket_search's isovalues=[...] list, so a stripped
     suffix would falsely equate e.g. p01@i2.0 with an unrelated p01@i3.0; only the voxel-IoU
     spatial clustering in global_id_and_comparison.py is allowed to unify pockets across
-    isovalues), pdb_id, state and gene -- gene from reference_data/hard_coded_gene_dict.txt via
+    isovalues), pdb_id, state and gene - gene from reference_data/hard_coded_gene_dict.txt via
     scripts.gene_selections"""
     df['Local ID'] = df['ID']
     df['state'] = df['prj'].str.extract(r'^(apo|holo)', expand=False)
@@ -293,8 +291,7 @@ def _add_identity_columns(df):
 
 
 def _add_orthosteric_flag(df, saving_loc):
-    """is_orthosteric via orthosteric_filter_ligand_based.classify_binding_site() -- run on
-    `df` itself (pocket centroid vs. ligand centroid), not the residue table."""
+    """is_orthosteric via orthosteric_filter_ligand_based.classify_binding_site()"""
     ortho = classify_binding_site(df, holo_base=conf.HOLO_BASE_DIR, saving_loc=saving_loc)
     ortho = ortho.assign(rep=ortho['rep'].astype(str), pocket_number=ortho['pocket_number'].astype(str))
 
@@ -337,21 +334,20 @@ def build_pocket_dataframes(pocket_dirs, saving_loc=conf.META_ANALYSIS_DIR, isov
     orthosteric_perframe_volumes.csv). Returns {'all_pockets', 'pocket_summary',
     'transient_dict'} for immediate reuse (e.g. from a notebook) without re-reading from disk.
 
-    use_raw_checkpoint (default True): cache the raw, pre-identity-columns `all_pockets` merge --
-    the output of the expensive part, reading every one of `pocket_dirs` (156 replicates takes
-    ~2h over the shared mount) -- to `{saving_loc}/_checkpoint_raw_all_pockets.parquet`, and
-    reuse it on a later call instead of re-reading from disk. This means a failure or retry in
-    any of the cheap, in-memory work after the read (identity columns, orthosteric flag, ...)
-    doesn't force paying the full ~2h read again. Caution: this does NOT detect if pocket_dirs'
-    underlying files changed since the checkpoint was written (e.g. Step 1 was re-run) -- delete
-    `_checkpoint_raw_all_pockets.parquet` (or pass use_raw_checkpoint=False) after any real
-    change to Step 1 output."""
+    use_raw_checkpoint (default True): cache the raw, pre-identity-columns `all_pockets` merge -
+    the output of the expensive part, reading every one of `pocket_dirs` to
+    `{saving_loc}/_checkpoint_raw_all_pockets.parquet`, and reuse it on a later call instead of re-reading from disk.
+    This means a failure or retry in any of the cheap, in-memory work after the read
+    (identity columns, orthosteric flag, ...) doesn't force paying the full read again.
+    Caution: this does NOT detect if pocket_dirs' underlying files changed since the checkpoint was written
+    (e.g. Step 1 was re-run) - delete _checkpoint_raw_all_pockets.parquet` (or pass use_raw_checkpoint=False)
+    after any real change to Step 1 output."""
     os.makedirs(saving_loc, exist_ok=True)
     raw_checkpoint_path = os.path.join(saving_loc, '_checkpoint_raw_all_pockets.parquet')
 
     if use_raw_checkpoint and os.path.exists(raw_checkpoint_path):
         print(f'CHECKPOINT: loading raw pocket read from {raw_checkpoint_path} instead of '
-             f're-reading {len(pocket_dirs)} replicates -- delete this file (or pass '
+             f're-reading {len(pocket_dirs)} replicates - delete this file (or pass '
              f'use_raw_checkpoint=False) if Step 1 output has changed since it was written.')
         all_pockets = pd.read_parquet(raw_checkpoint_path)
     else:
@@ -366,7 +362,7 @@ def build_pocket_dataframes(pocket_dirs, saving_loc=conf.META_ANALYSIS_DIR, isov
         if use_raw_checkpoint:
             all_pockets.to_parquet(raw_checkpoint_path)
             print(f'CHECKPOINT: saved raw pocket read to {raw_checkpoint_path} '
-                 f'({len(all_pockets)} rows) -- a retry from here will load this instead of '
+                 f'({len(all_pockets)} rows) - a retry from here will load this instead of '
                  f're-reading {len(pocket_dirs)} replicates.')
 
     all_pockets = _add_identity_columns(all_pockets)
@@ -525,14 +521,14 @@ def create_comparison_plots(summary_df, saving_loc, greyscale=False):
 def pocket_dirs_for(state_dirs=(conf.APO_RESULTS_DIR, conf.HOLO_RESULTS_DIR), isovalue=None,
                     isovalues=conf.ISOVALUES, pdb_ids=None):
     """[<APO_RESULTS_DIR or HOLO_RESULTS_DIR>/<state><PDBID>/<rep>/pockets, ...] for every
-    replicate that has a Step 1 pockets/ output under it -- or, when isovalues has more than one
+    replicate that has a Step 1 pockets/ output under it - or, when isovalues has more than one
     entry, the isovalue_<X.X> subdirectory for the given isovalue (see conf.isovalue_subpath()).
 
     pdb_ids: None (default) includes every PDB ID; otherwise an iterable of PDB IDs restricts
-    this to just those -- a general-purpose filter (e.g. a quick test parse of one structure).
+    this to just those - a general-purpose filter (e.g. a quick test parse of one structure).
     Step 2's own scoping of Global ID clustering to a meaningful subset (conf.
     REPRESENTATIVE_PDB_IDS) happens downstream, in global_id_and_comparison.run_global_id_states'
-    own pdb_ids= -- not here. Leave this at None in the normal Step 2.1 pipeline run so
+    own pdb_ids= - not here. Leave this at None in the normal Step 2.1 pipeline run so
     all_pockets/pocket_summary stay the complete dataset regardless of which subset any given
     Global ID run is scoped to."""
     pocket_dirs = []

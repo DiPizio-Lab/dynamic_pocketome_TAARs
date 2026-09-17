@@ -5,22 +5,18 @@ four pockets traced as 2D silhouettes projected through the SAME camera. The sil
 are what let a reader compare sizes properly - in the 3D view a large pocket occludes a
 small one, so the outlines carry the size comparison and the render carries the context.
 
-Encoding:  colour = state (apo sand, holo slate)   dashed = apo, solid = holo
+Encoding:  colour = state (apo sand, holo mauve)   dashed = apo, solid = holo
            full-strength colour = large pocket, lightened = small pocket
 
-Inputs (both produced from the SAME camera by the Blender scripts -- not included in this
-repo, see paper_figures_README.md):
+Inputs (both produced from the SAME camera by the Blender scripts - not included in this repo):
     pocket_camera_coords.npz   {object_name: (N, 2) pixel coords} + __res__
     <render>.png               ideally the no-background (RGBA) export
 
-Both are expected under BLENDER_DIR (default: blender_renders/ next to this file) -- drop
-them there, or point BLENDER_DIR/NPZ/RENDER at wherever you rendered them. Without them,
-load_coords() raises a clear error naming exactly what's missing; load_render() degrades
+Both are expected under BLENDER_DIR (default: blender_renders/ next to this file) - drop
+them there, or point BLENDER_DIR/NPZ/RENDER at wherever you rendered them. load_render() degrades
 quietly (panel D just renders without the image half) since a render is a nice-to-have,
 not something silhouette tracing depends on.
-
-Pocket styles are DERIVED from the object names, so reselecting the representative
-pockets needs no edits here. The backbone is excluded by name.
+The backbone is excluded by name.
 """
 import os
 
@@ -31,9 +27,8 @@ from skimage import measure
 
 import taar_style as ts
 
-# ---------------------------------------------------------------- constants
-# Not shipped with this repo -- see paper_figures_README.md for how these two files are
-# produced (Blender scripts, not included here) and drop them here, or point this
+# Globals
+# Not shipped with this repo - (Blender scripts, not included here), drop them here, or point this
 # elsewhere entirely.
 BLENDER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blender_renders")
 NPZ = os.path.join(BLENDER_DIR, "pocket_camera_coords.npz")
@@ -45,14 +40,12 @@ RENDER_TITLE = "apo vs holo, largest vs smallest"
 SILHOUETTE_TITLE = "silhouettes, common camera"
 OUT_FILE = os.path.join(ts.FIG_DIR, "panel_d_pocket_silhouettes.png")
 
-# never trace these - the backbone is geometry, not a pocket
 EXCLUDE = ("backbone", "ribbon", "protein", "cartoon")
 
 # The ligand is exported under "ligand__<object>" (full outline) and
-# "ligand_com__<object>" (its projected centre of mass). It is never sliced, because it
-# is what the cut is meant to reveal. 8JLR binds A77636 (VRK).
+# "ligand_com__<object>" (its projected centre of mass). 8JLR binds A77636 (VRK).
 SHOW_LIGAND = True
-LIGAND_STYLE = "outline"        # "outline" = its silhouette, "marker" = a dot at the COM
+LIGAND_STYLE = "outline"        # "outline" = its silhouette, "marker" = a dot at the Centre Of Mass
 LIGAND_COLOR = "#DE7B1E"
 LIGAND_LABEL = "ligand (A77636)"
 LIGAND_MARKER_SIZE = 22
@@ -75,7 +68,7 @@ WSPACE = 0.0         # gap between the render and the silhouettes
 CROP_TOL = 0.04      # background tolerance when autocropping an opaque render
 
 
-# ---------------------------------------------------------------- styles
+# Styles
 def pocket_style(key):
     """(state, size, style dict) for an npz key, or None if it is not a pocket"""
     lowered = key.lower()
@@ -104,7 +97,7 @@ def pocket_style(key):
         z=(4 if state == "holo" else 2) + (0 if is_large else -1))
 
 
-# ---------------------------------------------------------------- silhouette
+# Silhouette
 def _disk(radius):
     y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
     return x ** 2 + y ** 2 <= radius ** 2
@@ -115,13 +108,12 @@ def load_coords(npz=None):
 
     Keys are the blender object names, so nothing needs renaming when the pocket
     selection changes; anything failing pocket_style (the backbone) is dropped."""
-    npz = npz or NPZ                       # resolved at call time so setting NPZ works
+    npz = npz or NPZ
     if not os.path.exists(npz):
         raise FileNotFoundError(
-            f"{npz} not found -- panel D needs pocket_camera_coords.npz, produced by the "
-            "Blender export script (not included in this repo, see paper_figures_README.md's "
-            f"Blender note). Render it separately and place it at {npz} (or point NPZ/BLENDER_DIR "
-            "at wherever you rendered it).")
+            f"{npz} not found - panel D needs pocket_camera_coords.npz, produced by a "
+            "Blender script (not included in this repo). Render it separately and place it at {npz} "
+            "(or point NPZ/BLENDER_DIR at wherever you rendered it).")
     data = np.load(npz)
     coords = {key: np.asarray(data[key])[:, :2]
               for key in data.files if key != "__res__" and pocket_style(key)}
@@ -133,8 +125,7 @@ def load_coords(npz=None):
 
 def load_ligand(npz=None):
     """(outline, centre_of_mass) in the same pixel frame, or (None, None).
-
-    Older exports have no ligand entries, so this degrades quietly rather than raising."""
+    This degrades quietly rather than raising."""
     npz = npz or NPZ
     data = np.load(npz)
     outline = next((np.asarray(data[k])[:, :2] for k in data.files
@@ -153,7 +144,6 @@ def auto_close_radius(n_points, grid=GRID):
 
 def silhouette(points, extent, grid=GRID, close_radius=None):
     """rasterise projected vertices, close the gaps, trace the outline back to pixels.
-
     A point cloud has no edges, so it is binned onto a grid, morphologically closed to
     join neighbouring points into one blob, filled, and contoured."""
     if close_radius is None:
@@ -176,7 +166,7 @@ def silhouette(points, extent, grid=GRID, close_radius=None):
     return contours
 
 
-# ---------------------------------------------------------------- render
+# Render
 def _crop_to_mask(rgb, mask, margin=MARGIN):
     if not mask.any():
         return rgb
@@ -188,7 +178,6 @@ def _crop_to_mask(rgb, mask, margin=MARGIN):
 
 def load_render(path=None, fallback=None):
     """RGBA render composited onto white, or an opaque render autocropped.
-
     A transparent export needs compositing (matplotlib would otherwise show the alpha
     against the figure background); an opaque one only needs its empty margin trimmed."""
     path = path or RENDER
@@ -211,7 +200,7 @@ def load_render(path=None, fallback=None):
     return _crop_to_mask(rgb, content)
 
 
-# ---------------------------------------------------------------- drawing
+# Drawing
 def draw_render(ax, image, title=RENDER_TITLE):
     if image is not None:
         ax.imshow(image)
@@ -282,11 +271,9 @@ def draw_silhouettes(ax, coords, legend=True, ligand=None):
 
 def panel_aspects(coords, image):
     """(render, silhouette) width/height ratios.
-
     Both halves hold fixed-aspect content: imshow and the equal-aspect silhouettes.
-    Giving them equal-width boxes leaves the narrower one padded on both sides, which
-    is what opened the gap in the middle. Sizing each box to its own content aspect
-    removes that padding entirely."""
+    Giving them equal-width boxes leaves the narrower one padded on both sides. Sizing each box to its own content
+    aspect removes that padding entirely."""
     x0, x1, y0, y1 = silhouette_extent(coords)
     silhouette_aspect = (x1 - x0) / (y1 - y0)
     render_aspect = (image.shape[1] / image.shape[0]) if image is not None else 1.0

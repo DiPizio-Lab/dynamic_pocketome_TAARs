@@ -13,13 +13,10 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # so `import taar_style` works
-# whether this module is imported as `taar_paper_figures.fig2_binding_site` (e.g. from
-# pipeline/global_id_and_comparison.py, repo root on sys.path) or run as part of the
-# standalone `paper_plots.py` script (this directory on sys.path)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import taar_style as ts
 
-# ---------------------------------------------------------------- constants
+# Globals
 VOL_CSV = os.path.join(ts.ROOT, "output", "meta_analysis", "across_genes", "orthosteric_perframe_volumes.csv")
 OUT_FILE = os.path.join(ts.FIG_DIR, "figure2_binding_site.png")
 
@@ -46,20 +43,20 @@ VOL_COL = "interpolated_pock_volume"
 ID_RE = re.compile(r"^(apo|holo)([A-Za-z0-9]{4})_")
 VMAX = 1400
 # how the size categories are shown behind the boxes:
-#   "lines"  white plot area, coloured dashed line at each threshold (cleanest in print)
+#   "lines"  white plot area, coloured dashed line at each threshold
 #   "bands"  faint tinted bands, controlled by BAND_ALPHA
 BAND_STYLE = "bands"
 BAND_ALPHA = 0.10
-SHOW_STATE_ROW_LABELS = False   # tiny a/h beside each row - redundant with the apo/holo legend
+SHOW_STATE_ROW_LABELS = False   # tiny a/h beside each row
 BAR_OFF = 0.19
 BOX_H = 0.32
 ROW_H = 0.215                 # per-structure row height (in)
 ROW_BLOCK_PAD = 0.9          # labels/titles above and below the row block (in)
-IMG_BLOCK_H = 2.3            # height of the C/D block (in); total stays <= 9.167 (ACS)
+IMG_BLOCK_H = 2.3            # height of the C/D block (in); total stays <= 9.167
 TITLE_PAD = 10               # one pad for every panel -> titles line up
 LEGEND_ROW_H = 0.34          # inches reserved under panel A for its category legend
 
-# ---------------------------------------------------------------- data prep
+# Data prep
 def load_volumes():
     """per-frame orthosteric volumes; ID like 'apo8ITF_2_p19_i3' -> state + pdbid"""
     df = pd.read_csv(VOL_CSV, usecols=["ID", "rep", VOL_COL])
@@ -83,7 +80,7 @@ def delta_volume(vol, pdb_order):
         out.append((np.median(holo) - med_apo) / med_apo * 100.0 if med_apo else np.nan)
     return np.array(out, dtype=float)
 
-# ---------------------------------------------------------------- drawing
+# Drawing
 def draw_volume_panel(ax, vol, pdb_order, genes):
     """paired horizontal boxplots with viridis size-category bands behind"""
     if BAND_STYLE == "bands":
@@ -136,7 +133,6 @@ def _crop_to_mask(rgb, mask, margin=CROP_MARGIN):
 
 def load_image(path, tol=CROP_TOL):
     """finished panel image, trimmed to its content.
-
     A transparent (RGBA) export is composited onto white and cropped to the alpha; an
     opaque render has a soft gradient background rather than a flat colour, so each pixel
     is compared against a heavily blurred copy of itself to find the content."""
@@ -168,7 +164,7 @@ def draw_image_panel(ax, image, placeholder="render\npending"):
         spine.set_color("0.75"); spine.set_linewidth(0.5)
 
 
-# ---------------------------------------------------------------- assembly
+# Assembly
 def figure2(out_file=None):
     ts.apply_style()
     df = load_volumes()
@@ -247,10 +243,8 @@ def figure2(out_file=None):
         axes["delta"].tick_params(axis="x", labelsize=7)
         axes["delta"].set_title(u"\u0394 volume (%)", pad=TITLE_PAD)
         if "volume" in axes:
-            # panel A already carries the PDB rows. B shares A's y-axis, so DON'T clear the
-            # ticks (that empties A too) - just hide B's dashes and labels on B's side.
             axes["delta"].tick_params(axis="y", which="both", length=0, labelleft=False)
-        else:                                         # B is standalone -> it carries rows
+        else:
             axes["delta"].tick_params(axis="y", which="both", labelleft=True)
             axes["delta"].set_yticks(range(n_row))
             axes["delta"].set_yticklabels(pdb_order, fontsize=7)

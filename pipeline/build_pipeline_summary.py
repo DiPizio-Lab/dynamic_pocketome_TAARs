@@ -10,19 +10,13 @@ dataset-wide stages (meta_analysis, global_id, optional_analyses) are inferred f
 output tables under output/meta_analysis/, recorded on the shared run_summary.AGGREGATE_KEY row.
 These are only ever OK when the table's own 'prj'/'rep' columns cover every replicate
 get_project_list() finds under input/{apo,holo}_structures/.
-
-Every checkpoint is timestamped with the underlying result file's own mtime, not "now".
-
-Does not run anything -- read-only over output/, writes only logs/pipeline_summary.csv.
-
-Run this as `python pipeline/build_pipeline_summary.py`, not from inside scripts/.
 """
 import csv
 import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from pipeline.analysis_pipeline import get_project_list
 from scripts import run_summary
@@ -84,7 +78,7 @@ def _iso_stem_candidates(isovalue):
     the dot-free stem Step 2.1 renames it to IN PLACE the first time it runs over a replicate
     ('mdpout_dens_iso_3' for an integer isovalue, 'mdpout_dens_iso_3_5' otherwise). A replicate
     Step 2 has already touched is found under the post-rename stem; one it hasn't is found
-    under the name Step 1 originally wrote -- checking only the raw stem (as this used to)
+    under the name Step 1 originally wrote - checking only the raw stem (as this used to)
     reports every already-processed replicate as ERROR once Step 2 has renamed its files."""
     raw = f'mdpout_dens_iso_{isovalue}'
     iso_str = str(isovalue)
@@ -95,10 +89,9 @@ def _iso_stem_candidates(isovalue):
 
 def _pocket_search_status(pockets_dir, isovalues):
     """(pocket_detection status/message/mtime, pocket_separation ..., pocket_characterisation ...)
-    -- mirrors scripts/pocket_analysis.py's PocketAnalysis._pocket_search_complete /
+    - mirrors scripts/pocket_analysis.py's PocketAnalysis._pocket_search_complete /
     _expected_pocket_count logic (ATClus .group file's reported count vs. separated PDBs vs.
-    descriptors.txt), reimplemented standalone here so this read-only scan doesn't need to
-    import the MD-analysis-heavy PocketAnalysis class for a handful of file checks."""
+    descriptors.txt)."""
     grid_file = os.path.join(pockets_dir, 'mdpout_dens_grid.dx')
     if not os.path.isdir(pockets_dir) or not os.path.exists(grid_file):
         missing = ('MISSING', 'no pockets/ output found', None)
@@ -180,11 +173,11 @@ def backfill_per_experiment():
 
 def _expected_prj_reps():
     """{(folder_name, replicate), ...} for every replicate under both input structure trees,
-    e.g. {('apo8ITF', '1'), ...} -- matches the 'prj'/'rep' columns Step 2 writes into
+    e.g. {('apo8ITF', '1'), ...} - matches the 'prj'/'rep' columns Step 2 writes into
     output/meta_analysis/**/*.csv, so a checkpoint can check "does this table actually cover
     everything" instead of just "does this table exist". A partial Step 2 re-run (e.g. one
     interrupted after only a couple of replicates) still produces a real all_pockets.csv /
-    pocket_comparison_table.csv -- file existence alone can't tell that apart from a complete
+    pocket_comparison_table.csv - file existence alone can't tell that apart from a complete
     run."""
     return {(os.path.basename(os.path.dirname(p)), os.path.basename(p)) for p in get_project_list()}
 
@@ -269,10 +262,6 @@ def backfill_aggregate():
         run_summary.update_checkpoint(*key, 'optional_analyses', 'MISSING',
                                       f'no paper figures found in {figures_dir}')
     elif not global_id_complete:
-        # The figures are built from the same pocket_comparison_table.csv / all_pockets.csv
-        # checked above (see taar_paper_figures/*.py) -- a figure file existing just means SOME
-        # run produced it, not that it reflects every experiment, so this can't be OK while the
-        # data it was drawn from is incomplete.
         run_summary.update_checkpoint(*key, 'optional_analyses', 'ERROR',
                                       f'{len(found_figs)}/{len(figure_paths)} paper figures found in {figures_dir}, '
                                       'but Global ID data is incomplete (see global_id) -- figures reflect only a '

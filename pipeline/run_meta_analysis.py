@@ -1,5 +1,5 @@
 """Non-interactive Step 2 driver: pocket dataframes (2.1), then Global-ID clustering and
-apo/holo comparison (2.2) for apo, holo and the combined run -- the same recipe as
+apo/holo comparison (2.2) for apo, holo and the combined run - the same recipe as
 step2_pocket_analysis.ipynb, as a single script for batch/SLURM use. Requires Step 1
 (pipeline/analysis_pipeline.py) to have already finished for every replicate.
 
@@ -11,7 +11,7 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from pipeline import pocket_dataframes as pdf
 from pipeline.global_id_and_comparison import run_global_id_states
@@ -34,16 +34,16 @@ def parse_args():
                               "(one per gene). Mutually exclusive with --all-pdb-ids.")
     parser.add_argument('--all-pdb-ids', action='store_true',
                          help="Cluster every PDB ID together instead of the representative "
-                              "subset -- an unscoped comparison across every solved structure of "
-                              "the same receptor, and needs ~100+GB RAM for Step 2.2 (see module "
-                              "docstring); has OOM-killed a 230GB+ node. Mutually exclusive with "
-                              "--pdb-ids.")
+                              "subset - an unscoped comparison across every solved structure of "
+                              "the same receptor, and needs a lot of RAM for Step 2.2 (see module "
+                              "docstring); Usually doesn't make sense (see published article);"
+                              " Mutually exclusive with --pdb-ids.")
     parser.add_argument('--fresh-parse', action='store_true',
                          help="Ignore/overwrite pipeline.pocket_dataframes' "
                               "_checkpoint_raw_all_pockets.parquet and re-read every replicate "
                               "from scratch, instead of reusing a checkpoint left by a prior "
                               "(possibly crashed) run. Use this after Step 1 output actually "
-                              "changes -- otherwise the checkpoint (when present) is stale data.")
+                              "changes - otherwise the checkpoint (when present) is stale data.")
     args = parser.parse_args()
     if args.pdb_ids and args.all_pdb_ids:
         parser.error("--pdb-ids and --all-pdb-ids are mutually exclusive")

@@ -1,7 +1,6 @@
 """"this is a script for preprocessing your MD analysis project. It includes only one class called PreProcess
 which contains methods usually used as first steps of analyses, such as making a selection and saving it
-(e.g., to dry the protein) or aligning to reference structure.
-If you want to add basic functionalities this is the right script."""
+(e.g., to dry the protein) or aligning to reference structure."""
 import os
 import sys
 import time
@@ -9,7 +8,7 @@ import warnings
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 from scripts import logging as log
 
@@ -19,7 +18,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class PreProcess:
-    """stores methods dry protein and align protein"""
+    """stores methods to dry and align  a protein / proteins"""
 
     def __init__(self, topology=None, trajectory=None, curr_proj=None, curr_rep=None, verbose=False):
         self.topology = topology
@@ -29,11 +28,10 @@ class PreProcess:
         self.verbose = verbose
 
     def make_selection_n_save(self, selection=None, stride=1):
-        """gets to the dry protein stage if you use None --> protein is selected; use Alessandros backbone
-        selection should be a str, default: protein
+        """gets to the dry protein stage if you use None --> protein is selected;
         stride is int, default: 1, used to stride the trajectory, i.e., only every x-th frame is considered and saved,
         e.g., stride = 10 means that every tenth frame is considered"""
-        # dry_prot.write(os.path.join(saving_path, 'dry_prot.dcd'), frames='all')# just wont work (saves only 1st frame)
+        # dry_prot.write(os.path.join(saving_path, 'dry_prot.dcd'), frames='all')# just won't work (saves only 1st frame)
         log.log(f'\n Preprocessing: Make Selection and Save \n Data: {self.curr_proj}_{self.curr_rep} \n')
         saving_path = os.path.join(conf.results_dir_for(self.curr_proj), self.curr_proj, self.curr_rep)
         univ = mda.Universe(self.topology, self.trajectory)
@@ -81,7 +79,7 @@ class PreProcess:
         If no universe is given, it will align to the universe made from the class attributes
         reference: PDB file of the reference you want to align to,
         e.g., the PDB file used as input for the simulation or an average of the frames produced by the simulation"""
-        # Use either the attributes topology & trajectory or the User Inout, e.g., the universe of the dry protein
+        # Use either the attributes topology & trajectory or the User Input, e.g., the universe of the dry protein
         t0 = time.time()
         log.log(f'\n Preprocessing: Alignment to Reference \n Data: {self.curr_proj}_{self.curr_rep} \n')
         aligned_top, filename_dcd = conf.aligned_paths_for(self.curr_proj, self.curr_rep, 'dcd')
@@ -94,7 +92,7 @@ class PreProcess:
 
         ref_univ = mda.Universe(reference)
         ref_univ_prot = mda.Merge(ref_univ.select_atoms(selection))
-        # for some fucking reasons ypu have to select the atoms of a Universe first to be able to save it
+        # for some fucking reasons you have to select the atoms of a Universe first to be able to save it
         ref_univ_prot.atoms.write(aligned_top)
         if not os.path.exists(filename_dcd) and not os.path.exists(filename_xtc):
             if self.trajectory.endswith('.dcd'):

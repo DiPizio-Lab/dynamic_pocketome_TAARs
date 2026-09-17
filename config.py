@@ -17,7 +17,7 @@ def find_external_root(relative_suffix):
             return candidate
     raise FileNotFoundError(
         f"No /mnt/*/{relative_suffix} (or /mnt/*/*/{relative_suffix}) found on "
-        f"{os.uname().nodename} -- is the share mounted on this machine?")
+        f"{os.uname().nodename} - is the share mounted on this machine?")
 
 
 PROJECT_ROOT = os.environ.get("TAAR_ROOT", os.getcwd())
@@ -25,7 +25,7 @@ INPUT_DIR = os.path.join(PROJECT_ROOT, "input")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 REFERENCE_DATA_DIR = os.path.join(PROJECT_ROOT, "reference_data")
 
-# Raw MD input -- published separately, never written to by the pipeline.
+# Raw MD input - published separately, never written to by the pipeline.
 # Layout: {..._STRUCTURES_DIR}/<state><PDBID>/<replicate>/
 #           {structure.pdb, structure.psf, traj_wrapped.xtc}
 APO_STRUCTURES_DIR = os.path.join(INPUT_DIR, "apo_structures")

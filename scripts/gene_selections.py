@@ -3,23 +3,23 @@ selections (binding site, ICL3) needed for the RMSD selections in Step 1 of the 
 The BW-equivalent residue numbers were derived once from the hTAAR1 binding site residues using the
 BW numbering in reference_data/TAARs_numbered/ and are stored (not recomputed) in
 reference_data/binding_site_residues.txt and reference_data/ICL3_definition.txt.
-Note: mTAAR9 has only 26 binding site residues -- its TM5 is missing the residue at BW 5.46
+Note: mTAAR9 has only 26 binding site residues - its TM5 is missing the residue at BW 5.46
 (a one-residue deletion relative to the other three genes), so no equivalent resid exists for it.
 
 ICL3_definition.txt lists each gene's ICL3 core +/- 3 residues (12 residues total), matching the
-exclusion window used for the "CA without ICL3" RMSD -- the paper's primary RMSD/alignment metric
+exclusion window used for the "CA without ICL3" RMSD - the paper's primary RMSD/alignment metric
 (see fig1_rmsd_heatmaps.py). Unlike the binding-site/side-chain columns, "CA without ICL3" is NOT
 a groupselection reported off the full-backbone-CA fit: ICL3 is flexible enough that including it
 in the superposition fit distorts the reported deviation of the rest of the receptor. It is instead
-its own standalone self-referenced RMSD -- superposed (fit) using ONLY the ICL3-excluded CA atoms,
-against frame 0 of the same (already pre-aligned) trajectory -- see
+its own standalone self-referenced RMSD - superposed (fit) using ONLY the ICL3-excluded CA atoms,
+against frame 0 of the same (already pre-aligned) trajectory - see
 BasicAnalysis.calc_rmsd(icl3_free_selection=...) in scripts/basic_analysis.py."""
 import ast
 import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as conf
 
 GENE_DICT_PATH = os.path.join(conf.REFERENCE_DATA_DIR, 'hard_coded_gene_dict.txt')
@@ -53,7 +53,6 @@ def gene_for_project(folder_name):
     return gene_dict()[pdb_id]
 
 
-# read once at import time
 BINDING_SITE_RESIDS = _load_resid_dict(BINDING_SITE_PATH)
 ICL3_RESIDS = _load_resid_dict(ICL3_PATH)
 
@@ -61,7 +60,7 @@ ICL3_RESIDS = _load_resid_dict(ICL3_PATH)
 def group_selection_for(gene):
     """MDAnalysis group_selection dict (as used by BasicAnalysis.calc_rmsd, reported off the
     full-backbone-CA fit) for the given gene: binding site CA and binding site side chains.
-    Does NOT include ICL3 -- that RMSD is its own standalone self-fit metric, see
+    Does NOT include ICL3 - that RMSD is its own standalone self-fit metric, see
     ca_without_icl3_selection_for()."""
     binding_site_resids = ' '.join(str(r) for r in BINDING_SITE_RESIDS[gene])
     return {'binding site': [f'protein and name CA and (resid {binding_site_resids})'],
@@ -71,6 +70,6 @@ def group_selection_for(gene):
 def ca_without_icl3_selection_for(gene):
     """Atom selection for the gene's ICL3-excluded Cα (core +/- 3 residues, see module
     docstring). Fed to BasicAnalysis.calc_rmsd(icl3_free_selection=...), which fits and reports
-    RMSD using this selection alone -- not as a groupselection off the full-backbone-CA fit."""
+    RMSD using this selection alone - not as a groupselection off the full-backbone-CA fit."""
     icl3_resids = ' '.join(str(r) for r in ICL3_RESIDS[gene])
     return f'protein and name CA and not (resid {icl3_resids})'

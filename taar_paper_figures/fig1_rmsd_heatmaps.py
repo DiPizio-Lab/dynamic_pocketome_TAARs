@@ -1,8 +1,7 @@
 """This script visualises the RMSD of MD simulations as a heatmap and a differential plot (apo vs holo).
 Useful for the TAAR project because we have simulations of 156 µs of time.
 Colourmap is viridis and values are taken from the previously (pipeline) calculated
-RMSD values in /mnt/cpm_crienaecker/Z/RienaeckerC/apo_holo_analysis/apo_structures/
-results/apo8ITF/1/RMSD_protein_and_name_CA.csv
+RMSD values in/.../RMSD_protein_and_name_CA.csv
 Median calculated along a column using float(np.median())"""
 import time
 import re
@@ -18,9 +17,6 @@ import taar_style as ts
 pd.set_option('expand_frame_repr', False)
 pd.options.display.max_colwidth = 500  # long values in columns fully displayed
 
-# ------------------------------------------
-# package lives inside the analysis directory, so ROOT is its parent (same rule as
-# taar_style.py). Override with the TAAR_ROOT environment variable if you move it.
 PACKAGE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("TAAR_ROOT", PACKAGE_DIR.parent))
 OUT_PATH = os.path.join(ROOT, "output", "meta_analysis", "RMSD_results_median.csv")
@@ -31,11 +27,10 @@ METRICS = {
     "protein and name CA in":       "CA",
     "RMSD of binding site in":      "binding_site",
     "side chains of binding site":  "binding_site_sidechains",
-    "CA without ICL3":              "CA_wo_ICL3",
-}
+    "CA without ICL3":              "CA_wo_ICL3"}
 
 FOLDER_RE = re.compile(r"^(apo|holo)([A-Za-z0-9]{4})$")  # e.g. apo8ITF
-# ---------------------------------------------------------------------------
+
 GENE_DICT_PATH = os.path.join(ROOT, "reference_data", "hard_coded_gene_dict.txt")
 HEATMAP_DIR = os.path.join(ROOT, "output", "meta_analysis", "paper_figures")
 GENE_ORDER = ["hTAAR1", "mTAAR1", "mTAAR7f", "mTAAR9"]
@@ -44,13 +39,13 @@ METRIC_CA = "median_CA_wo_ICL3"
 METRIC_BS = "median_binding_site_sidechains"
 PANEL_TITLES = ("Cα without ICL3", "Binding site (side chains)")
 FIG_H_CONST = 0.7    # vertical padding constant (keeps rows aligned between figures)
-COMBINED_W = 7.0     # combined-figure width in inches; saved file stays <= 7 in (ACS double column)
+COMBINED_W = 7.0     # combined-figure width in inches; saved file stays <= 7 in
 
 # palette comes from taar_style so a global colour change propagates to every figure.
 # viridis stays for the continuous heatmap values.
 STATE_COLORS = ts.STATE_COLORS
 GENE_COLORS = ts.GENE_COLORS
-# ---------------------------------------------------------------------------
+
 
 def col_for(df, needle):
     (hit,) = [c for c in df.columns if needle in c]  # expects exactly one
@@ -61,10 +56,10 @@ def csv_summary_rmsd():
     returns summarised csv of all experiments"""
     rows = []
     for csv_path in sorted(ROOT.glob(GLOB)):
-        m = FOLDER_RE.match(csv_path.parent.parent.name)
-        if not m:
+        match = FOLDER_RE.match(csv_path.parent.parent.name)
+        if not match:
             continue
-        state, pdbid, rep = m.group(1), m.group(2).upper(), csv_path.parent.name
+        state, pdbid, rep = match.group(1), match.group(2).upper(), csv_path.parent.name
         df = pd.read_csv(csv_path)
         row = {"experiment": f"{state}_{pdbid}_{rep}","state": state,"pdbid": pdbid, "rep": rep}
         for col_name, short_name in METRICS.items():
@@ -79,32 +74,32 @@ def csv_summary_rmsd():
     return rmsd_df
 
 # Plotting
-# apply_style / load_gene_map / contiguous_blocks / gene labelling live in taar_style (ts.*) -
-# see below. order_pdbids keeps its df-taking signature here (all call sites pass the summary_csv
+# apply_style / load_gene_map / contiguous_blocks / gene labelling live in taar_style (ts.*).
+# order_pdbids keeps its df-taking signature here (all call sites pass the summary_csv
 # dataframe) but delegates the actual sort to ts.order_pdbids, which takes a plain PDB ID list.
 def order_pdbids(summary_csv, gene_map):
     """returns the PDB IDs present in the summary, ordered by gene (GENE_ORDER) then PDB ID"""
     return ts.order_pdbids(summary_csv["pdbid"].unique(), gene_map)
 
 def median_matrix(summary_csv, metric_col, pdb_order):
-    """collapses replicates to their median -> matrix with rows = PDB IDs, cols = apo, holo"""
-    matrix = summary_csv.pivot_table(index="pdbid", columns="state", values=metric_col, aggfunc="median")
-    matrix = matrix.reindex(index=pdb_order, columns=["apo", "holo"])
-    return matrix
+    """collapses replicates to their median --> median_matrix with rows = PDB IDs, cols = apo, holo"""
+    median_matrix = summary_csv.pivot_table(index="pdbid", columns="state", values=metric_col, aggfunc="median")
+    median_matrix = median_matrix.reindex(index=pdb_order, columns=["apo", "holo"])
+    return median_matrix
 
 def replicate_matrix(summary_csv, metric_col, pdb_order):
-    """keeps replicates separate -> matrix with rows = PDB IDs, cols = apo reps then holo reps"""
+    """keeps replicates separate --> matrix with rows = PDB IDs, cols = apo reps then holo reps"""
     df = summary_csv.copy()
     df["state_rep"] = df["state"] + "_" + df["rep"].astype(str)
     matrix = df.pivot_table(index="pdbid", columns="state_rep", values=metric_col)
-    apo_cols = sorted(c for c in matrix.columns if c.startswith("apo"))
-    holo_cols = sorted(c for c in matrix.columns if c.startswith("holo"))
+    apo_cols = sorted(col for col in matrix.columns if col.startswith("apo"))
+    holo_cols = sorted(col for col in matrix.columns if col.startswith("holo"))
     matrix = matrix.reindex(index=pdb_order, columns=apo_cols + holo_cols)
     return matrix
 
 def differential_percent(summary_csv, metric_col, pdb_order):
     """per PDB: (holo - apo) / apo * 100, using the median over replicates.
-    positive -> holo moves more, negative -> apo moves more (matches the 'what moves more' table)"""
+    positive --> holo moves more, negative --> apo moves more """
     matrix = median_matrix(summary_csv, metric_col, pdb_order)
     diff = (matrix["holo"] - matrix["apo"]) / matrix["apo"] * 100.0
     return diff.reindex(pdb_order)
@@ -117,11 +112,8 @@ def split_state_rep(col):
         return state, rep
     return text, None
 
-# contiguous_blocks and the gene-label placement (fixed 34pt offset, matching this figure
-# exactly) now live in taar_style as ts.contiguous_blocks / ts.gene_labels.
-
 def _heat_scale(matrices):
-    """shared vmin/vmax and a viridis cmap (missing cells -> light grey)"""
+    """shared vmin/vmax and a viridis cmap (missing cells --> light grey)"""
     vmin = min(np.nanmin(m.values) for m in matrices)
     vmax = max(np.nanmax(m.values) for m in matrices)
     cmap = plt.get_cmap("viridis").copy()
@@ -169,7 +161,7 @@ def _draw_heatmap_panel(ax, matrix, genes, vmin, vmax, cmap, value_annot):
 
 def _draw_diff_panel(ax, diff_values, genes, xmax):
     """draw one metric's diverging bar panel onto ax; bars coloured by which state moves more
-    (coral = apo moves more, slate = holo moves more). Keeps the 0 reference line."""
+    (sand = apo moves more, mauve = holo moves more). Keeps the 0 reference line."""
     n_row = len(diff_values)
     y = np.arange(n_row)
     colors = [STATE_COLORS["holo"] if v >= 0 else STATE_COLORS["apo"] for v in diff_values]
@@ -222,7 +214,7 @@ def plot_two_metrics(matrix_ca, matrix_bs, gene_map, suptitle, out_file, value_a
 
 def differential_plot(out_file=None):
     """separate differential figure: diverging bars (state-coloured), same order/scale as the heatmap.
-    right -> holo moves more, left -> apo moves more."""
+    right --> holo moves more, left --> apo moves more."""
     ts.apply_style()
     summary_csv = pd.read_csv(OUT_PATH)
     gene_map = ts.load_gene_map()
@@ -264,8 +256,7 @@ PANELS = {
 
 def combined_plot(value_annot=False, replicates=True, out_file=None):
     """single stitched figure: two RMSD heatmaps + shared colourbar + two differential panels,
-    all sharing the gene-ordered PDB rows. Defaults to the all-replicates heatmap.
-    Sized to stay within the ACS double-column width (<= 7 in)."""
+    all sharing the gene-ordered PDB rows. Defaults to the all-replicates heatmap."""
     ts.apply_style()
     summary_csv = pd.read_csv(OUT_PATH)
     gene_map = ts.load_gene_map()
@@ -356,7 +347,7 @@ def combined_plot(value_annot=False, replicates=True, out_file=None):
     print(f"Saved combined plot to {out_file}")
 
 def heatmap_plots(value_annot=True):
-    """uses  analysis_results/RMSD_results_median.csv to create heatmaps in viridis colour scale.
+    """uses analysis_results/RMSD_results_median.csv to create heatmaps in viridis colour scale.
     value_annot toggles the per-cell numbers on/off."""
     summary_csv = pd.read_csv(OUT_PATH)
     gene_map = ts.load_gene_map()
@@ -383,4 +374,4 @@ if __name__ == '__main__':
     # heatmap_plots(value_annot=False)   # the two heatmaps on their own
     # differential_plot()                # the differential on its own
     t1 = time.time()
-    print(f'Your pipeline took {t1 - t0} seconds')
+    print(f'The plotting took {t1 - t0} seconds')

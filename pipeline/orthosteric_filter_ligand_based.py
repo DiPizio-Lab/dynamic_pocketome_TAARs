@@ -6,11 +6,9 @@ and everything downstream of that file.
 
 A pocket is binding-site (orthosteric) if its own centroid (the mean x/y/z of
 all its dummy-atom/alpha-sphere coordinates, across every frame) falls within
-DEFAULT_DISTANCE_THRESHOLD (5 A) of its PDB's co-crystallized ligand centroid.
+DEFAULT_DISTANCE_THRESHOLD (5 Angstroem) of its PDB's co-crystallized ligand centroid.
 
 Apo pockets are scored against their *holo counterpart's* ligand centroid
-(load_ligand_centroids() only reads holo_base, keyed by bare PDB ID; an apo
-pocket's own apo/holo prefix is stripped before the lookup).
 """
 
 import os
@@ -21,7 +19,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, Optional, List
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import HOLO_BASE_DIR
 
 DEFAULT_HOLO_BASE = HOLO_BASE_DIR
@@ -30,18 +28,15 @@ DEFAULT_LIGAND_RESNAMES = ['LIG']
 
 
 def extract_ligand_coords(pdb_path: str, resnames: List[str] = DEFAULT_LIGAND_RESNAMES) -> Optional[np.ndarray]:
-    """
-    Extract heavy-atom coordinates for the ligand from a PDB file.
-
+    """Extract heavy-atom coordinates for the ligand from a PDB file.
     Reads both ATOM and HETATM records: the CHARMM-formatted structure.pdb files
-    this pipeline works with record every residue -- ligand, protein, water,
-    ions, lipid alike -- as ATOM, never HETATM, so filtering on record type
+    this pipeline works with record every residue - ligand, protein, water,
+    ions, lipid alike - as ATOM, never HETATM, so filtering on record type
     alone would silently find nothing.
 
     Returns array of shape (n_atoms, 3), or None if the file has no residue
-    named `resnames` -- always the case for an apo structure, since the ligand
-    is stripped out before the MD system is built (see module docstring for how
-    apo pockets are classified anyway).
+    named `resnames` - always the case for an apo structure, since the ligand
+    is stripped out before the MD system is built.
     """
     coords = []
 
@@ -111,38 +106,24 @@ def classify_binding_site(pockets_df: pd.DataFrame, holo_base: str = DEFAULT_HOL
                           filename: str = 'pocket_labels_ortho_def.csv') -> pd.DataFrame:
     """
     Classify every pocket in pockets_df as binding-site (orthosteric) or not.
-
     A pocket is binding-site if its own centroid (the mean of coord_columns
-    across every one of its rows - every frame, every dummy atom/alpha sphere)
-    is within distance_threshold of its PDB's ligand centroid (see
-    load_ligand_centroids; apo pockets resolve to their holo counterpart's).
+    across every one of its rows is within distance_threshold of its PDB's ligand centroid
+    (apo pockets resolve to their holo counterpart's).
 
-    Parameters
-    ----------
-    pockets_df : pd.DataFrame
-        One row per (pocket, frame, alpha sphere) -- e.g.
-        pipeline/pocket_dataframes.py's `all_pockets` right after
-        _add_identity_columns(), before it's trimmed down to KEEP_COLS. Needs
-        id_column, prj_column and coord_columns; 'rep' and 'pocket_number', if
-        present, are carried through into the result for merging back.
-    holo_base : str
-        Path to the raw holo input tree (PDB+rep layout), used to derive each
-        PDB's ligand centroid (see load_ligand_centroids).
-    distance_threshold : float
-        Pocket-centroid-to-ligand-centroid cutoff (Angstrom).
-    id_column, coord_columns, prj_column : str / list[str]
-        Column names for the per-pocket identifier, its x/y/z coordinates, and
-        the project id (e.g. 'apo8ITF') used to look up the right ligand.
-    saving_loc : str, optional
-        If given, also writes the result to {saving_loc}/{filename} (Stage 3's
-        fallback source for is_binding_site when it's missing from
-        pocket_comparison_table.csv).
+    pockets_df : pd.DataFrame; One row per (pocket, frame, alpha sphere) - e.g.pipeline/pocket_dataframes.py's
+                `all_pockets` right after _add_identity_columns(), before it's trimmed down to KEEP_COLS. Needs
+                id_column, prj_column and coord_columns; 'rep' and 'pocket_number', if  present, are carried through
+                into the result for merging back.
+    holo_base : str; Path to the raw holo input tree (PDB+rep layout), used to derive each PDB's ligand centroid.
+    distance_threshold : float; Pocket-centroid-to-ligand-centroid cutoff (Angstroem).
+    id_column, coord_columns, prj_column : str / list[str]; Column names for the per-pocket identifier, its x/y/z
+                                            coordinates, and the project id (e.g. 'apo8ITF') used to look up the
+                                            adequate ligand.
+    saving_loc : str, optional; If given, also writes the result to {saving_loc}/{filename} (Stage 3's fallback source
+                for is_binding_site when it's missing from pocket_comparison_table.csv).
 
-    Returns
-    -------
-    pd.DataFrame
-        One row per pocket ID: id_column, prj_column, 'rep'/'pocket_number' (if
-        present in pockets_df), 'distance_to_ligand_centroid', 'is_binding_site'.
+    OUT: pd.DataFrame; One row per pocket ID: id_column, prj_column, 'rep'/'pocket_number' (if present in pockets_df),
+        'distance_to_ligand_centroid', 'is_binding_site'.
     """
     ligand_centroids = load_ligand_centroids(holo_base, ligand_resnames=ligand_resnames)
 

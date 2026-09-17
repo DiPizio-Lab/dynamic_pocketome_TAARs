@@ -1,8 +1,8 @@
-""""this is a script to create avery trivial log-file of the print outputs of this pipeline"""
+""""this is a script to create a very trivial log-file of the print outputs of this pipeline"""
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root, for `config`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
 log_messages = []

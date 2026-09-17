@@ -4,20 +4,15 @@ C answers "does the NUMBER of pockets change", D answers "does their SIZE change
 rows = the same gene-ordered PDB IDs as figure 1; apo/holo as paired sub-bars."""
 import os
 import sys
-
 import numpy as np
 import pandas as pd
-
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
-
 import taar_style as ts
 import pocketome_metrics as pm
+from pipeline import pocket_io
 
-sys.path.insert(0, os.path.join(ts.ROOT, "pipeline"))  # for `pocket_io`
-import pocket_io
-
-# ---------------------------------------------------------------- constants
+# Constants
 POCKET_DATA_DIR = os.path.join(ts.ROOT, "output", "meta_analysis", "across_genes")
 OUT_FILE = os.path.join(ts.FIG_DIR, "figure3_allosteric_pocketome.png")
 
@@ -26,7 +21,7 @@ COL_CAT = "volume_category"
 COL_ORTHO = "is_orthosteric"
 #     transient  =  (n_zero_frames >= MIN_ZERO_FRACTION * N_FRAMES)
 #                    AND (max_consecutive_zero_frames >= MIN_CONSEC_ZEROS)
-# DERIVE_TRANSIENCY = False uses the stored `transient` column (MIN_CONSEC_ZEROS=50) instead.
+# DERIVE_TRANSIENCY = False uses the stored `transient` column (MIN_CONSEC_ZEROS=15) instead.
 DERIVE_TRANSIENCY = True
 MIN_CONSEC_ZEROS = 15
 MIN_ZERO_FRACTION = 0.10
@@ -53,7 +48,7 @@ BAR_H = 0.34
 BAR_OFF = 0.19
 TITLE_PAD = 10
 
-# ---------------------------------------------------------------- data prep
+# Data prep
 def load_pockets():
     """pocket table, reduced to allosteric (non-orthosteric) pockets"""
     df = pocket_io.load_table(POCKET_DATA_DIR, "pocket_summary")
@@ -62,7 +57,7 @@ def load_pockets():
     return df
 
 def _representative_rep_counts(df, group_col, levels, rep_map):
-    """breakdown by group_col, read off the representative replicate for each (pdb, state) --
+    """breakdown by group_col, read off the representative replicate for each (pdb, state) -
     see pocketome_metrics.representative_replicate()."""
     out = {}
     for (pdb, state), rep in rep_map.items():
@@ -75,7 +70,7 @@ def size_counts(df, rep_map):
     return _representative_rep_counts(df, COL_CAT, ts.CATEGORIES, rep_map)
 
 def transient_mask(df):
-    """boolean transiency per pocket - see the TRANSIENCY note at the top of this file"""
+    """boolean transiency per pocket - see the note at the top of this file"""
     if not DERIVE_TRANSIENCY:
         return df[STAB_COL].astype(bool)
     return ((df[COL_ZERO_FRAMES] >= MIN_ZERO_FRACTION * N_FRAMES)
@@ -86,7 +81,7 @@ def stability_counts(df, rep_map):
     df["_stab"] = np.where(transient_mask(df), "transient", "stable")
     return _representative_rep_counts(df, "_stab", ["stable", "transient"], rep_map)
 
-# ---------------------------------------------------------------- drawing
+# Drawing
 def _row_frame(ax, n_row, genes):
     ax.set_ylim(n_row - 0.5, -0.5)
     ts.gene_dividers(ax, genes)
@@ -157,7 +152,7 @@ def draw_category_delta(ax, deltas, pdb_order, genes):
             va="bottom", fontsize=6, color="0.35")
 
 
-# ---------------------------------------------------------------- assembly
+# Assembly
 def figure3(out_file=None):
     ts.apply_style()
     df = load_pockets()

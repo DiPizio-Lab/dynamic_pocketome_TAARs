@@ -11,9 +11,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.patches import Patch
 
-# =============================================================================
+
 # GLOBAL COLOR CONFIGURATION
-# =============================================================================
 # Viridis palette samples (green -> blue -> violet range: 0.2 to 0.9)
 # Adjust these values to change colors throughout all plots
 
@@ -75,9 +74,7 @@ DEFAULT_PLOT_COLOR_GREY = '#525252'  # Dark grey
 VOLUME_CATEGORY_ORDER = ['Small (<250)', 'Medium (250-500)', 'Large (500-750)', 'Very Large (>750)']
 STABILITY_ORDER = ['Stable', 'Transient']
 
-# =============================================================================
 # EXPORT CONFIGURATION
-# =============================================================================
 # Default settings for high-resolution exports
 DEFAULT_DPI = 300
 DEFAULT_SCALE = 2  # For Plotly exports (2x resolution)
@@ -88,9 +85,6 @@ DEFAULT_HEIGHT = 900
 def save_plotly_figure(fig, filepath_base, width=None, height=None, scale=None):
     """
     Save a Plotly figure in HTML, PNG, and PDF formats.
-
-    Parameters:
-    -----------
     fig : plotly.graph_objects.Figure
         The Plotly figure to save
     filepath_base : str
@@ -103,22 +97,15 @@ def save_plotly_figure(fig, filepath_base, width=None, height=None, scale=None):
     scale : int, optional
         Scale factor for image export (default: DEFAULT_SCALE)
 
-    Returns:
-    --------
-    dict : Paths to saved files {'html': path, 'png': path, 'pdf': path}
+    OUT: dict : Paths to saved files {'html': path, 'png': path, 'pdf': path}
     """
     width = width or DEFAULT_WIDTH
     height = height or DEFAULT_HEIGHT
     scale = scale or DEFAULT_SCALE
-
     saved_files = {}
-
-    # Save HTML (always works)
     html_path = f"{filepath_base}.html"
     fig.write_html(html_path, include_plotlyjs='cdn')
     saved_files['html'] = html_path
-
-    # Save PNG and PDF (requires kaleido)
     try:
         png_path = f"{filepath_base}.png"
         fig.write_image(png_path, format='png', width=width, height=height, scale=scale)
@@ -139,8 +126,6 @@ def save_matplotlib_figure(fig, filepath_base, dpi=None):
     """
     Save a Matplotlib figure in PNG and PDF formats.
 
-    Parameters:
-    -----------
     fig : matplotlib.figure.Figure
         The Matplotlib figure to save
     filepath_base : str
@@ -149,9 +134,7 @@ def save_matplotlib_figure(fig, filepath_base, dpi=None):
     dpi : int, optional
         Resolution in dots per inch (default: DEFAULT_DPI)
 
-    Returns:
-    --------
-    dict : Paths to saved files {'png': path, 'pdf': path}
+    OUT: dict : Paths to saved files {'png': path, 'pdf': path}
     """
     dpi = dpi or DEFAULT_DPI
     saved_files = {}
@@ -171,17 +154,12 @@ def save_matplotlib_figure(fig, filepath_base, dpi=None):
 def get_color_dict(color_type, greyscale=None):
     """
     Get the appropriate color dictionary based on greyscale mode.
-
-    Parameters:
-    -----------
     color_type : str
         One of 'volume', 'stability', 'state', 'default'
     greyscale : bool, optional
         Override global GREYSCALE_MODE setting
 
-    Returns:
-    --------
-    dict or str with colors
+    OUT: dict or str with colors
     """
     use_grey = greyscale if greyscale is not None else GREYSCALE_MODE
 
@@ -200,11 +178,7 @@ def get_color_dict(color_type, greyscale=None):
 def set_greyscale_mode(enabled=True):
     """
     Enable or disable greyscale mode globally.
-
-    Parameters:
-    -----------
-    enabled : bool
-        If True, use greyscale colors throughout all plots
+    enabled : bool; If True, use greyscale colors throughout all plots
     """
     global GREYSCALE_MODE
     GREYSCALE_MODE = enabled
@@ -214,9 +188,6 @@ def set_greyscale_mode(enabled=True):
 def get_viridis_colors(n, start=None, end=None, greyscale=None):
     """
     Generate n colors from Viridis palette within specified range.
-
-    Parameters:
-    -----------
     n : int
         Number of colors to generate
     start : float, optional
@@ -226,9 +197,7 @@ def get_viridis_colors(n, start=None, end=None, greyscale=None):
     greyscale : bool, optional
         Override global GREYSCALE_MODE setting
 
-    Returns:
-    --------
-    list of color strings
+    OUT: list of color strings
     """
     use_grey = greyscale if greyscale is not None else GREYSCALE_MODE
 
@@ -255,9 +224,6 @@ def update_color_scheme(volume_colors=None, stability_colors=None, state_colors=
                         default_color=None, viridis_range=None, greyscale=None):
     """
     Update global color configuration.
-
-    Parameters:
-    -----------
     volume_colors : dict, optional
         Dictionary mapping volume categories to colors
     stability_colors : dict, optional
@@ -272,18 +238,12 @@ def update_color_scheme(volume_colors=None, stability_colors=None, state_colors=
         Enable/disable greyscale mode
 
     Example:
-    --------
     # Use different Viridis range (more towards violet)
     update_color_scheme(viridis_range=(0.4, 0.95))
-
     # Enable greyscale mode
     update_color_scheme(greyscale=True)
-
     # Custom stability colors
-    update_color_scheme(stability_colors={
-        'Stable': '#31688e',
-        'Transient': '#1a5e1a'
-    })
+    update_color_scheme(stability_colors={'Stable': '#31688e', 'Transient': '#1a5e1a'})
     """
     global VOLUME_CATEGORY_COLORS, STABILITY_COLORS, STATE_COLORS
     global DEFAULT_PLOT_COLOR, VIRIDIS_RANGE, GREYSCALE_MODE
@@ -299,15 +259,12 @@ def update_color_scheme(volume_colors=None, stability_colors=None, state_colors=
             'Small (<250)': px.colors.sample_colorscale("Viridis", positions[0])[0],
             'Medium (250-500)': px.colors.sample_colorscale("Viridis", positions[1])[0],
             'Large (500-750)': px.colors.sample_colorscale("Viridis", positions[2])[0],
-            'Very Large (>750)': px.colors.sample_colorscale("Viridis", positions[3])[0]
-        }
+            'Very Large (>750)': px.colors.sample_colorscale("Viridis", positions[3])[0]}
         stab_positions = np.linspace(viridis_range[0], viridis_range[1], 2)
         STABILITY_COLORS = {
             'Stable': px.colors.sample_colorscale("Viridis", stab_positions[1])[0],
-            'Transient': '#1a5e1a'  # Keep dark green for transient
-        }
-        # STATE_COLORS (apo/holo) stays fixed to sand/mauve regardless of viridis_range --
-        # it's not part of the Viridis continuum, see the module-level comment above.
+            'Transient': '#1a5e1a' }
+
         DEFAULT_PLOT_COLOR = px.colors.sample_colorscale("Viridis",
                                                          (viridis_range[0] + viridis_range[1]) / 2)[0]
 
@@ -321,10 +278,7 @@ def update_color_scheme(volume_colors=None, stability_colors=None, state_colors=
         DEFAULT_PLOT_COLOR = default_color
 
 
-# =============================================================================
 # HELPER FUNCTIONS
-# =============================================================================
-
 def read_bw_numbering(bw_csv_file):
     """Read BW numbering to identify TM helices."""
     df = pd.read_csv(bw_csv_file)
@@ -341,22 +295,18 @@ def read_bw_numbering(bw_csv_file):
 def extract_helix_coordinates(pdb_file, bw_helices, pdb_coords):
     """Extract 3D coordinates for each helix from PDB structure."""
     helix_coords = {}
-
     for helix_name, res_ids in bw_helices.items():
         coords = []
         for res_id in res_ids:
             if res_id in pdb_coords:
                 coords.append(pdb_coords[res_id])
-
         if coords:
             helix_coords[helix_name] = np.array(coords)
-
     return helix_coords
 
 
 def extract_pdbid_info(pocket_id):
-    """Extract state, PDB ID, and replicate from pocket ID.
-    e.g., 'apo8ITF_1_100_4_2' -> ('apo8ITF', 'apo', '8ITF', '1') """
+    """Extract state, PDB ID, and replicate from pocket ID. e.g., 'apo8ITF_1_10_i3' -> ('apo8ITF', 'apo', '8ITF', '1')"""
     m = re.match(r'^([a-z]+)([A-Za-z0-9]+)_(\d+)', pocket_id)
     if m:
         state = m.group(1)
@@ -370,17 +320,12 @@ def extract_pdbid_info(pocket_id):
 def sort_experiments(experiment_list, group_apo_holo=True):
     """
     Sort experiment labels, optionally grouping apo/holo pairs together.
-
-    Parameters:
-    -----------
     experiment_list : list or Index
         List of experiment labels like ['apo8ITF rep 1', 'holo8ITF rep 1', ...]
     group_apo_holo : bool
         If True, sort so apo and holo of same PDB ID are adjacent
 
-    Returns:
-    --------
-    sorted list
+    OUT: sorted list
     """
     experiments = list(experiment_list)
 
@@ -407,17 +352,11 @@ def sort_experiments(experiment_list, group_apo_holo=True):
 def sort_dataframe_index(df, group_apo_holo=True):
     """
     Sort DataFrame index (experiment labels), grouping apo/holo pairs.
-
-    Parameters:
-    -----------
     df : DataFrame
         DataFrame with experiment labels as index
     group_apo_holo : bool
         If True, sort so apo and holo of same PDB ID are adjacent
-
-    Returns:
-    --------
-    DataFrame with sorted index
+    OUT: DataFrame with sorted index
     """
     sorted_idx = sort_experiments(df.index, group_apo_holo=group_apo_holo)
     return df.reindex(sorted_idx)
@@ -462,10 +401,8 @@ def get_first_frame_data(df, snapshot_col='snapshot'):
     return df[df[snapshot_col] == first_snapshot].copy()
 
 
-# =============================================================================
-# MAIN PLOTTING FUNCTIONS
-# =============================================================================
 
+# MAIN PLOTTING FUNCTIONS
 def plot_largest_pockets(saving_loc, pocket_df, pdb_file=None, bw_csv_file=None, out_html='largest_pocket.html',
                          marker_size=6, backbone=False, helix_opacity=0.2, title='Largest Pocket Analysis',
                          export_pdfs=True, pdf_output_dir=None, hydro_col='hydrophobicity_score',
@@ -742,18 +679,12 @@ def _create_individual_figure(pocket_df, state_pdbid, rep, volume_col, hydro_col
     return fig
 
 
-# =============================================================================
 # DISTRIBUTION PLOT FUNCTIONS
-# =============================================================================
-
 def plot_volume_category_distribution(pocket_df, saving_loc, volume_col='interpolated_pock_volume',
                                       out_prefix='volume_distribution', group_apo_holo=True,
                                       aggregation='per_pocket', greyscale=None):
     """
     Create volume category distribution plots using global VOLUME_CATEGORY_COLORS.
-
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data with ID and volume columns
     saving_loc : str
@@ -773,7 +704,6 @@ def plot_volume_category_distribution(pocket_df, saving_loc, volume_col='interpo
         Override global GREYSCALE_MODE
 
     Data explanation:
-    -----------------
     For 'per_pocket' (default):
         1. Group by unique pocket ID
         2. Calculate mean volume for that pocket across all frames
@@ -936,9 +866,6 @@ def plot_transient_stable_distribution(pocket_df, transient_dict, saving_loc,
                                        greyscale=None):
     """
     Create transient vs stable pocket distribution plots using global STABILITY_COLORS.
-
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data
     transient_dict : dict
@@ -1077,8 +1004,6 @@ def plot_combined_volume_stability(pocket_df, transient_dict, saving_loc,
     """
     Create combined visualization showing both volume categories and stability.
 
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data
     transient_dict : dict
@@ -1211,10 +1136,7 @@ def plot_combined_volume_stability(pocket_df, transient_dict, saving_loc,
     return fig
 
 
-# =============================================================================
 # HIERARCHICAL GROUPED BAR PLOTS (PDB ID > State > Replicate)
-# =============================================================================
-
 def prepare_hierarchical_data(pocket_df, transient_dict=None, volume_col='interpolated_pock_volume'):
     """
     Prepare data for hierarchical plotting with PDB ID > State > Replicate structure.
@@ -1260,8 +1182,6 @@ def plot_hierarchical_stability(pocket_df, transient_dict, saving_loc,
     (state, replicate) actually present in the data (e.g. apo rep1, apo rep2, holo
     rep1, holo rep2 for a 2-replicate dataset)
 
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data
     transient_dict : dict
@@ -1296,9 +1216,8 @@ def plot_hierarchical_stability(pocket_df, transient_dict, saving_loc,
         vertical_spacing=0.12
     )
 
-    # Define x-axis structure for each subplot -- reps are whatever replicates are
-    # actually present in the data, not a fixed count, so e.g. a 2-replicate dataset
-    # doesn't get a phantom, always-empty "rep 3" bar
+    # Define x-axis structure for each subplot - reps are whatever replicates are
+    # actually present in the data, not a fixed count
     states = ['apo', 'holo']
     reps = sorted(pocket_summary['rep'].dropna().unique(), key=str)
     x_labels = [f'{s} r{r}' for s in states for r in reps]  # ['apo r1', 'apo r2', ..., 'holo r1', ...]
@@ -1370,9 +1289,6 @@ def plot_hierarchical_volume_categories(pocket_df, saving_loc,
                                         n_cols=4, greyscale=None):
     """
     Create hierarchical bar plot showing volume categories per PDB ID > State > Replicate.
-
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data
     saving_loc : str
@@ -1468,12 +1384,9 @@ def plot_aggregated_by_structure(pocket_df, transient_dict, saving_loc,
                                  greyscale=None):
     """
     Create bar plots aggregated across replicates (median/mean) per state+PDB ID.
-
     For stability: median count of stable/transient pockets across replicates
     For volume categories: categorize first, count, then take median across replicates
 
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data
     transient_dict : dict
@@ -1501,16 +1414,12 @@ def plot_aggregated_by_structure(pocket_df, transient_dict, saving_loc,
 
     agg_func = np.median if aggregation == 'median' else np.mean
 
-    # === Aggregate stability counts ===
     stability_per_rep = pocket_summary.groupby(['pdb_id', 'state', 'rep', 'stability']).size().unstack(fill_value=0)
-
-    # Aggregate across replicates
     stability_agg = stability_per_rep.groupby(['pdb_id', 'state']).agg(agg_func).round().astype(int)
     stability_agg['structure'] = stability_agg.index.get_level_values('state') + stability_agg.index.get_level_values(
         'pdb_id')
     stability_agg = stability_agg.reset_index()
 
-    # Sort
     if group_apo_holo:
         stability_agg['sort_key'] = stability_agg['pdb_id'] + '_' + stability_agg['state'].map(
             {'apo': '0', 'holo': '1'})
@@ -1518,7 +1427,6 @@ def plot_aggregated_by_structure(pocket_df, transient_dict, saving_loc,
     else:
         stability_agg = stability_agg.sort_values('structure')
 
-    # === Aggregate volume category counts ===
     volume_per_rep = pocket_summary.groupby(['pdb_id', 'state', 'rep', 'size_category']).size().unstack(fill_value=0)
     volume_per_rep = volume_per_rep.reindex(columns=VOLUME_CATEGORY_ORDER, fill_value=0)
 
@@ -1603,11 +1511,8 @@ def plot_overall_distributions(pocket_df, transient_dict, saving_loc,
                                greyscale=None):
     """
     Create overall distribution plots considering ALL pockets (no aggregation).
-
     This shows the true distribution across all pockets in the dataset.
 
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data
     transient_dict : dict
@@ -1763,14 +1668,11 @@ def create_all_distribution_plots(pocket_df, transient_dict, saving_loc,
                                   n_cols=4, greyscale=None):
     """
     Convenience function to create ALL distribution plots at once.
-
     Creates:
     1. Hierarchical plots (PDB ID > State > Replicate) - all replicates shown
     2. Aggregated plots (median across replicates per structure)
     3. Overall distribution plots (all pockets considered)
 
-    Parameters:
-    -----------
     pocket_df : DataFrame
         Pocket data
     transient_dict : dict
@@ -1786,7 +1688,6 @@ def create_all_distribution_plots(pocket_df, transient_dict, saving_loc,
     """
     print("Creating all distribution plots")
 
-    # Create output directory if it doesn't exist
     os.makedirs(saving_loc, exist_ok=True)
 
     print("1. Hierarchical plots (all replicates)")
@@ -1812,9 +1713,7 @@ def create_all_distribution_plots(pocket_df, transient_dict, saving_loc,
     print("All distribution plots created successfully.")
 
 
-# =============================================================================
-# ADDITIONAL VISUALIZATIONS (from original visualizations.py)
-# =============================================================================
+# ADDITIONAL VISUALIZATIONS
 # These functions include:
 # - plot_3d_heatmap: Interactive 3D heatmap with slider
 # - plot_3d_apo_holo_comparison: Side-by-side 3D comparison with camera sync
@@ -2065,9 +1964,6 @@ def plot_3d_apo_holo_comparison(saving_loc, df='first_frame_summary_df.csv',
                                 title='Apo vs Holo Pocket Comparison'):
     """
     Creates side-by-side 3D scatter plots comparing apo and holo protein structures.
-
-    Parameters:
-    -----------
     saving_loc : str
         Directory path for input CSV and output HTML
     df : str or DataFrame
@@ -2531,7 +2427,6 @@ def plot_3d_apo_holo_comparison(saving_loc, df='first_frame_summary_df.csv',
 
     # Save output with synchronized camera script
     html_string = fig.to_html()
-    # Insert the sync script before the closing body tag
     html_string = html_string.replace('</body>', sync_js + '</body>')
 
     output_path = os.path.join(saving_loc, out_html)
@@ -2562,8 +2457,6 @@ def vis_apo_holo_number_pockets(df, figsize=(14, 6), save_path=None, version='me
     """
     Visualize the number of pockets found per PDB ID, separated by apo and holo states.
 
-    Parameters:
-    -----------
     df : pandas.DataFrame
         DataFrame containing pocketome data with 'ID' column in format:
         {state}{PDBID}_{replicate}_p{pocket_num}_i{isovalue}
@@ -2576,9 +2469,7 @@ def vis_apo_holo_number_pockets(df, figsize=(14, 6), save_path=None, version='me
         'median' - Plot median pocket counts across replicates (default)
         'replicates' - Plot one subplot per replicate actually present in the data
 
-    Returns:
-    --------
-    fig, ax : matplotlib figure and axes objects
+    OUT: fig, ax : matplotlib figure and axes objects
     """
 
     # Parse the ID column to extract all components
@@ -2594,19 +2485,16 @@ def vis_apo_holo_number_pockets(df, figsize=(14, 6), save_path=None, version='me
             return state, pdb_id, replicate, pocket_local, isovalue
         return None, None, None, None, None
 
-    # Apply parsing to create new columns
     df_parsed = df.copy()
     df_parsed[['state', 'pdb_id', 'replicate', 'pocket_local', 'isovalue']] = df_parsed['ID'].apply(
         lambda x: pd.Series(parse_id(x))
     )
 
-    # Count unique pockets per state/PDB/replicate combination
-    # Each unique combination of pocket_local represents one pocket
     pocket_counts = df_parsed.groupby(['state', 'pdb_id', 'replicate', 'pocket_local']).size().reset_index(
         name='voxel_count')
     pocket_summary = pocket_counts.groupby(['state', 'pdb_id', 'replicate']).size().reset_index(name='num_pockets')
 
-    # Define colors -- sand / mauve, matching STATE_COLORS
+    # Define colors - sand / mauve, matching STATE_COLORS
     apo_color = STATE_COLORS['apo']
     holo_color = STATE_COLORS['holo']
 
@@ -2621,13 +2509,9 @@ def vis_apo_holo_number_pockets(df, figsize=(14, 6), save_path=None, version='me
 def _plot_median(pocket_summary, figsize, save_path, apo_color, holo_color):
     """Create a single plot with median pocket counts across replicates"""
 
-    # Calculate median across replicates for each state/PDB combination
     median_counts = pocket_summary.groupby(['state', 'pdb_id'])['num_pockets'].median().reset_index()
-
-    # Pivot to get apo and holo counts side by side
     pivot_data = median_counts.pivot(index='pdb_id', columns='state', values='num_pockets').fillna(0)
 
-    # Ensure both apo and holo columns exist
     if 'apo' not in pivot_data.columns:
         pivot_data['apo'] = 0
     if 'holo' not in pivot_data.columns:
@@ -2638,20 +2522,16 @@ def _plot_median(pocket_summary, figsize, save_path, apo_color, holo_color):
     pivot_data = pivot_data.sort_values('total', ascending=False)
     pivot_data = pivot_data.drop('total', axis=1)
 
-    # Create the plot
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Set up bar positions
     x = np.arange(len(pivot_data))
     width = 0.35
 
-    # Create bars
     bars1 = ax.bar(x - width / 2, pivot_data['apo'], width, label='Apo',
                    color=apo_color, alpha=0.9, edgecolor='black', linewidth=0.7)
     bars2 = ax.bar(x + width / 2, pivot_data['holo'], width, label='Holo',
                    color=holo_color, alpha=0.9, edgecolor='black', linewidth=0.7)
 
-    # Customize the plot
     ax.set_xlabel('PDB ID', fontsize=13, fontweight='bold')
     ax.set_ylabel('Median Number of Pockets', fontsize=13, fontweight='bold')
     n_reps = pocket_summary['replicate'].nunique()
@@ -2663,7 +2543,6 @@ def _plot_median(pocket_summary, figsize, save_path, apo_color, holo_color):
     ax.grid(axis='y', alpha=0.3, linestyle='--', linewidth=0.5)
     ax.set_ylim(0, max(pivot_data[['apo', 'holo']].max()) * 1.15)
 
-    # Add value labels on bars
     def add_value_labels(bars):
         for bar in bars:
             height = bar.get_height()
@@ -2675,12 +2554,9 @@ def _plot_median(pocket_summary, figsize, save_path, apo_color, holo_color):
     add_value_labels(bars1)
     add_value_labels(bars2)
 
-    # Adjust layout
     plt.tight_layout()
 
-    # Save if path provided - save both PNG and PDF
     if save_path:
-        # Remove extension if present
         save_base = save_path.rsplit('.', 1)[0] if '.' in save_path else save_path
         save_matplotlib_figure(fig, save_base)
 
@@ -2697,7 +2573,6 @@ def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
     if n_reps == 1:
         axes = [axes]
 
-    # Process each replicate
     for rep_idx, replicate in enumerate(replicates):
         ax = axes[rep_idx]
 
@@ -2706,28 +2581,23 @@ def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
         # Pivot to get apo and holo counts side by side
         pivot_data = rep_data.pivot(index='pdb_id', columns='state', values='num_pockets').fillna(0)
 
-        # Ensure both apo and holo columns exist
         if 'apo' not in pivot_data.columns:
             pivot_data['apo'] = 0
         if 'holo' not in pivot_data.columns:
             pivot_data['holo'] = 0
 
-        # Sort by total number of pockets (descending)
         pivot_data['total'] = pivot_data['apo'] + pivot_data['holo']
         pivot_data = pivot_data.sort_values('total', ascending=False)
         pivot_data = pivot_data.drop('total', axis=1)
 
-        # Set up bar positions
         x = np.arange(len(pivot_data))
         width = 0.35
 
-        # Create bars
         bars1 = ax.bar(x - width / 2, pivot_data['apo'], width, label='Apo',
                        color=apo_color, alpha=0.9, edgecolor='black', linewidth=0.7)
         bars2 = ax.bar(x + width / 2, pivot_data['holo'], width, label='Holo',
                        color=holo_color, alpha=0.9, edgecolor='black', linewidth=0.7)
 
-        # Customize the subplot
         ax.set_ylabel('Number of Pockets', fontsize=12, fontweight='bold')
         ax.set_title(f'Replicate {replicate}', fontsize=13, fontweight='bold', pad=10)
         ax.set_xticks(x)
@@ -2736,7 +2606,6 @@ def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
         ax.grid(axis='y', alpha=0.3, linestyle='--', linewidth=0.5)
         ax.set_ylim(0, 30)  # Fixed scale for comparison
 
-        # Add value labels on bars
         def add_value_labels(bars):
             for bar in bars:
                 height = bar.get_height()
@@ -2748,19 +2617,14 @@ def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
         add_value_labels(bars1)
         add_value_labels(bars2)
 
-    # Set common x-axis label
     axes[-1].set_xlabel('PDB ID', fontsize=13, fontweight='bold')
 
-    # Overall title
     fig.suptitle('Number of Pockets per PDB ID: Apo vs Holo States\n(Individual Replicates)',
                  fontsize=15, fontweight='bold', y=0.995)
 
-    # Adjust layout
     plt.tight_layout()
 
-    # Save if path provided - save both PNG and PDF
     if save_path:
-        # Remove extension if present
         save_base = save_path.rsplit('.', 1)[0] if '.' in save_path else save_path
         save_matplotlib_figure(fig, save_base)
 
@@ -2768,7 +2632,6 @@ def _plot_replicates(pocket_summary, figsize, save_path, apo_color, holo_color):
 
 
 # Volume of binding site
-
 def _load_summary_data_for_binding_site(summary_csv_path):
     """Load the (prj, rep, pocket_number, snapshot, interpolated_pock_volume, ID) columns
     needed by plot_binding_site_volume_violin, in chunks (the source CSV can be too large to
@@ -2803,8 +2666,6 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     5. Calculate median volume per frame ACROSS REPLICATES
     6. Create violin plots
 
-    Parameters:
-    -----------
     pocket_comparison_df : pandas.DataFrame
         Pocket comparison table with 'Local Pocket ID' and 'is_orthosteric' columns
     summary_df : pandas.DataFrame, optional
@@ -2816,9 +2677,7 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     create_individual_plots : bool
         If True, creates one plot per PDB ID in addition to the combined plot
 
-    Returns:
-    --------
-    dict : Paths to generated plot files
+    OUT: dict : Paths to generated plot files
         {'combined': path, 'individual': [list of paths]}
     """
     violin_dir = os.path.join(saving_loc, 'violin_plots_volume')
@@ -2850,7 +2709,6 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
 
     binding_local_ids = binding_pockets[id_col].unique()
 
-    # Load summary data
     if summary_df is None:
         if summary_csv_path is None:
             summary_csv_path = os.path.join(saving_loc, 'summary_df_3d_coords.csv')
@@ -2860,16 +2718,13 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
         print("ERROR: summary_df has no 'snapshot' column -- can't build a per-frame volume series")
         return None
 
-    # Extract state and clean PDB ID
     summary_df = summary_df.copy()
     summary_df['state'] = summary_df['prj'].str.extract(r'^(apo|holo)', expand=False)
     summary_df['clean_id'] = summary_df['prj'].str.replace(r'^(apo|holo)', '', regex=True)
 
-    # A pocket has multiple rows per real MD frame -- one per alpha sphere/dummy atom, all
-    # sharing the same volume (see consecutive_zeros_transiency._per_frame_volumes) -- so this
+    # A pocket has multiple rows per real MD frame - one per alpha sphere/dummy atom, all
+    # sharing the same volume (see consecutive_zeros_transiency._per_frame_volumes) - so this
     # must dedupe to one row per (pocket, snapshot) before using snapshot as the frame axis.
-    # Using a raw per-group row counter here instead would silently number alpha spheres, not
-    # frames, and make adjacent "frames" jump between unrelated volumes.
     summary_df = summary_df.drop_duplicates(subset=['ID', 'snapshot'])
     summary_df = summary_df.dropna(subset=['state', 'clean_id', 'interpolated_pock_volume', 'ID'])
 
@@ -2917,14 +2772,12 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
     plt.style.use('seaborn-v0_8-whitegrid')
     sns.set_context("paper", font_scale=1.2)
 
-    # Color scheme -- sand / mauve, matching STATE_COLORS
     APO_COLOR = STATE_COLORS['apo']
     HOLO_COLOR = STATE_COLORS['holo']
 
     pdb_ids = sorted(median_volumes['clean_id'].unique())
     n_pdbs = len(pdb_ids)
 
-    # Create figure - wide enough for all PDB IDs
     fig, ax = plt.subplots(figsize=(max(16, n_pdbs * 1.5), 8))
 
     plot_data = []
@@ -2954,50 +2807,41 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
             positions.append(i * 3 + 1)
             colors.append(HOLO_COLOR)
 
-    # Create violin plot
     parts = ax.violinplot(plot_data, positions=positions, widths=0.8,
                           showmeans=True, showmedians=True)
 
-    # Color the violins
     for i, pc in enumerate(parts['bodies']):
         pc.set_facecolor(colors[i])
         pc.set_alpha(0.8)
         pc.set_edgecolor('black')
         pc.set_linewidth(1.5)
 
-    # Customize other elements
     for partname in ('cbars', 'cmins', 'cmaxes', 'cmedians', 'cmeans'):
         if partname in parts:
             vp = parts[partname]
             vp.set_edgecolor('black')
             vp.set_linewidth(2)
 
-    # Labels and title
     ax.set_xlabel('PDB ID', fontsize=14, fontweight='bold')
     ax.set_ylabel('Median Binding Site Volume (Å³)', fontsize=14, fontweight='bold')
     ax.set_title('Binding Site Volume Distribution: Apo vs Holo (All PDB IDs)',
                  fontsize=16, fontweight='bold', pad=20)
 
-    # X-axis labels
     pdb_positions = [i * 3 + 0.5 for i in range(n_pdbs)]
     ax.set_xticks(pdb_positions)
     ax.set_xticklabels(pdb_ids, rotation=45, ha='right', fontsize=10)
 
-    # Legend
     legend_elements = [
         Patch(facecolor=APO_COLOR, edgecolor='black', label='Apo', alpha=0.8),
-        Patch(facecolor=HOLO_COLOR, edgecolor='black', label='Holo', alpha=0.8)
-    ]
+        Patch(facecolor=HOLO_COLOR, edgecolor='black', label='Holo', alpha=0.8)]
     ax.legend(handles=legend_elements, loc='upper right', frameon=True,
               fontsize=12, title='State')
 
-    # Grid
     ax.yaxis.grid(True, alpha=0.3, linewidth=0.8)
     ax.set_axisbelow(True)
 
     plt.tight_layout()
 
-    # Save combined plot
     combined_path = os.path.join(violin_dir, "violin_plot_binding_site_ALL_PDBs.png")
     plt.savefig(combined_path, dpi=300, bbox_inches='tight')
 
@@ -3012,14 +2856,11 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
 
     if create_individual_plots:
         for pdb_id in pdb_ids:
-            # Filter data for this PDB ID
             pdb_data = median_volumes[median_volumes['clean_id'] == pdb_id]
 
-            # Get apo and holo data
             apo_data = pdb_data[pdb_data['state'] == 'apo']['median_volume'].values
             holo_data = pdb_data[pdb_data['state'] == 'holo']['median_volume'].values
 
-            # Create plot
             fig, ax = plt.subplots(figsize=(8, 6))
 
             plot_data = []
@@ -3043,53 +2884,41 @@ def plot_binding_site_volume_violin(pocket_comparison_df, summary_df=None,
                 plt.close()
                 continue
 
-            # Create violin plot
             parts = ax.violinplot(plot_data, positions=positions, widths=0.6,
                                   showmeans=True, showmedians=True)
 
-            # Color the violins
             for i, pc in enumerate(parts['bodies']):
                 pc.set_facecolor(colors[i])
                 pc.set_alpha(0.8)
                 pc.set_edgecolor('black')
                 pc.set_linewidth(1.5)
 
-            # Customize other elements
             for partname in ('cbars', 'cmins', 'cmaxes', 'cmedians', 'cmeans'):
                 if partname in parts:
                     vp = parts[partname]
                     vp.set_edgecolor('black')
                     vp.set_linewidth(2)
 
-            # Labels and title
             ax.set_xticks(positions)
             ax.set_xticklabels(labels, fontsize=12)
             ax.set_ylabel('Median Binding Site Volume (Å³)', fontsize=12, fontweight='bold')
             ax.set_title(f'{pdb_id} Binding Site: Apo vs Holo',
                          fontsize=14, fontweight='bold', pad=15)
 
-            # Grid
             ax.yaxis.grid(True, alpha=0.3, linewidth=0.8)
             ax.set_axisbelow(True)
 
             plt.tight_layout()
 
-            # Save individual plot - both PNG and PDF
             individual_base = os.path.join(violin_dir, f"violin_plot_binding_site_{pdb_id}")
             save_matplotlib_figure(fig, individual_base)
             individual_paths.append(f"{individual_base}.png")
 
             plt.close()
 
-    # ========================================================================
     # Summary
-    # ========================================================================
     print(f"Generated {1 + len(individual_paths)} plots (PNG + PDF each):")
     print(f"  - 1 combined plot (all PDB IDs)")
     print(f"  - {len(individual_paths)} individual plots")
 
-    return {
-        'combined': combined_path,
-        'combined_pdf': combined_pdf,
-        'individual': individual_paths
-    }
+    return {'combined': combined_path,'combined_pdf': combined_pdf, 'individual': individual_paths}
