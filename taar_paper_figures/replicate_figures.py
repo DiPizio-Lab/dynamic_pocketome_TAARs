@@ -1,8 +1,6 @@
 """Figures for the replicate concordance of the reduced example case.
-
 Main figure - three panels in one row, with the bottom of the canvas left free
 for the Blender render that becomes panel D:
-
     A  count collapse   - what each replicate found, per PDB. Circles are local
                           pockets, filled squares the global IDs those pockets
                           map onto, open square the global IDs when all three
@@ -11,21 +9,17 @@ for the Blender render that becomes panel D:
                           range: pooling replicates adds almost no new global
                           pockets even though the raw counts disagree.
     B  occupancy        - core / shell / singleton counted by global ID, by local
-                          pocket and by volume. The three bars diverging is the
-                          argument that the disagreement sits in small pockets.
+                          pocket and by volume.
     C  presence matrix  - which global ID was seen in which replicate, sorted by
                           global ID.
     D  reserved for the render (three replicate surfaces in one shared envelope)
-
 Supplementary figure
     E  Jaccard heatmap  - within-PDB blocks against the between-PDB background
     F  rarefaction      - global IDs recovered from 1, 2, 3 replicates
-
 Colour grammar, one channel per variable: state = hue, taken from taar_style so a
 palette change there propagates here. Lightness within that hue carries replicate
 number (A, C) and occupancy class (B), always darker = more replicate support.
 Genes and states carry no coloured text; labels are black, as elsewhere.
-
 Metrics are not recomputed here - every panel calls the functions in
 replicate_analysis_wrapper.
 """
@@ -43,25 +37,19 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, to_rgb, to_hex
 from matplotlib.lines import Line2D
 from matplotlib.transforms import ScaledTranslation
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline"))
-import pocket_io
+from pipeline import pocket_io
 import gid_replicate_analysis_wrapper as rep
 
 # config
 ROOT = rep.ROOT
-# pipeline/global_id_and_comparison.py --subset {state} writes here (was global_ID_{state}_only)
+# pipeline/global_id_and_comparison.py - subset {state} writes here
 STATE_RESULT_DIR_TEMPLATE = os.path.join(ROOT, "global_ID_{state}")
-VOXEL_TABLE = "global_pockets_IoU_voxel.csv"   # csv-only, no parquet counterpart
+VOXEL_TABLE = "global_pockets_IoU_voxel.csv"
 SWEEP_TABLE_TEMPLATE = os.path.join("replicate_analysis", "threshold_sweep_{state}.csv")
 SAVING_LOC = os.path.join(ROOT, "replicate_figures")
 
-# taar_style is the single source of truth for the state hues; it lives alongside
-# this file in taar_paper_figures/, which is already on sys.path when this script runs
 TAAR_STYLE_PATH = os.path.dirname(os.path.abspath(__file__))
-
 STATES = ["apo", "holo"]
-
 PANELS = {"collapse": True, "occupancy": True, "matrix": True}
 SUPPLEMENTARY_PANELS = {"jaccard": True, "rarefaction": True, "spread": True, "sweep": True}
 
@@ -70,29 +58,23 @@ RESERVE_RENDER_PANEL = True
 RENDER_PANEL_HEIGHT_RATIO = 1.30        # only used when AUTO_RENDER_PANEL_HEIGHT is off
 RENDER_PANEL_IMAGE = "fig4D_exp_GID_apo_holo_comparison_matching_run_no_singletons.png"
 RENDER_PANEL_SEARCH_DIRS = [SAVING_LOC, ROOT, os.path.dirname(os.path.abspath(__file__))]
-
-# The render is much wider than it is tall, so a hand-set row height leaves a band
-# of white on either side of it. With this on, the row height and the figure height
-# are solved for the image's own aspect ratio, so the render spans the full column
-# width with no padding. The three panels above keep their absolute size to within
-# a few percent; the figure simply gets taller.
 AUTO_RENDER_PANEL_HEIGHT = True
 RENDER_FIT_PASSES = 6
 RENDER_FIT_TOLERANCE_INCHES = 0.01
 
 SHOW_PANEL_LETTERS = True
-FIGURE_WIDTH = 7.0                      # ACS single page width, inches
+FIGURE_WIDTH = 7.0
 MAIN_FIGURE_HEIGHT = 7.2
 SUPPLEMENTARY_FIGURE_HEIGHT = 6.4
-PANEL_WIDTH_RATIOS = [1.20, 1.05, 0.95]  # A, B, C
+PANEL_WIDTH_RATIOS = [1.20, 1.05, 0.95]
 OUTPUT_FORMATS = ["png", "svg", "pdf"]
 DPI = 600
 
 RANDOM_SEED = 42
 
 FALLBACK_STATE_COLORS = {"apo": "#D9B98B", "holo": "#9B5560"}
-LIGHT_MIX = 0.44                        # white fraction for replicate 1 / singleton
-DARK_MIX = 0.25                         # black fraction for replicate 3 / core
+LIGHT_MIX = 0.44
+DARK_MIX = 0.25
 
 NEUTRAL_DARK = "#1A1A1A"
 NEUTRAL_GREY = "#57595C"
@@ -106,7 +88,7 @@ LETTER_FONT_SIZE = 9
 MARKER_AREA_POINTS = 18
 INSIDE_LABEL_MIN_SHARE = 9.0
 
-JACCARD_COLOUR_LIMITS = (0.2, 0.9)      # self-comparisons are masked, so 1.0 never occurs
+JACCARD_COLOUR_LIMITS = (0.2, 0.9)
 
 REPLICATE_ORDER = [1, 2, 3]
 OCCUPANCY_LABELS = {1: "1 of 3", 2: "2 of 3", 3: "3 of 3"}
@@ -116,12 +98,10 @@ WEIGHTING_COLUMNS = [("n_global_ids", "by global ID"),
                      ("total_volume", "by volume")]
 
 
-# --------------------------------------------------------------------------- palette
+# palette
 def load_state_colors():
-    """
-    Pull the state hues from taar_style so a palette change there propagates.
-    Falls back to the current hexes if the package is not importable (e.g. when
-    running the figures somewhere the paper package is not installed).
+    """Pull the state hues from taar_style so a palette change there propagates.
+    Falls back to the current hexes if the package is not importable.
     """
     if TAAR_STYLE_PATH and TAAR_STYLE_PATH not in sys.path:
         sys.path.insert(0, TAAR_STYLE_PATH)
@@ -150,7 +130,7 @@ REPLICATE_SHADES = {state: build_shade_ramp(colour) for state, colour in STATE_C
 OCCUPANCY_SHADES = REPLICATE_SHADES
 
 
-# --------------------------------------------------------------------------- data
+# Data
 def load_state_tables():
     """Everything every panel needs, per state, via the wrapper's own functions."""
     state_tables = {}
@@ -214,19 +194,16 @@ def place_state_label(axes, state, row_centre, x_offset_points):
                   va="center", ha="center", fontsize=LABEL_FONT_SIZE, color=NEUTRAL_DARK)
 
 
-# --------------------------------------------------------------------------- panel A
+# Panel A
 def draw_collapse_panel(axes, state_tables):
-    """
-    Per PDB, what each replicate found. Circles (upper half of the row) are local
+    """Per PDB, what each replicate found. Circles (upper half of the row) are local
     pockets, filled squares (lower half) the distinct global IDs those pockets map
     onto; each replicate sits at its own small vertical offset so two replicates
     reporting the same count stay visible instead of overlapping.
-
     The open square is the number of distinct global IDs when all three replicates
     are pooled - the union of the three global ID sets. If the replicates were
     finding different pockets, pooling would push it well to the right of the
-    filled squares. It does not, which is the point of the panel.
-    """
+    filled squares."""
     row_labels, row_positions = [], []
     figure = axes.get_figure()
     marker_diameter_points = np.sqrt(MARKER_AREA_POINTS)
@@ -279,13 +256,11 @@ def draw_collapse_panel(axes, state_tables):
                           x_offset_points=-30)
 
 
-# --------------------------------------------------------------------------- panel B
+# Panel B
 def draw_occupancy_panel(axes, state_tables):
-    """
-    The same core / shell / singleton split counted three ways. Counting global IDs
-    makes the pocketome look unreliable; weighting by local pocket and by volume
-    shows how little of it the unreliable part carries.
-    """
+    """The same core / shell / singleton split counted three ways. Counting global IDs
+    does not represent the pocketome; weighting by local pocket and by volume
+    shows how little of it the counts carry. """
     bar_labels, bar_positions = [], []
     position = 0
     for state in STATES:
@@ -324,7 +299,7 @@ def draw_occupancy_panel(axes, state_tables):
                           x_offset_points=-58)
 
 
-# --------------------------------------------------------------------------- panel C
+# Panel C
 def experiment_columns(pockets_df):
     projects = sorted(pockets_df[rep.COLUMN_PROJECT].unique())
     return projects, [(project, replicate) for project in projects
@@ -334,12 +309,9 @@ def experiment_columns(pockets_df):
 
 
 def draw_presence_matrix(axes, state_tables, state, show_row_labels):
-    """
-    Global IDs (rows, in numerical order) against the twelve experiments. A filled
+    """Global IDs (rows, in numerical order) against the twelve experiments. A filled
     cell means that global ID was detected in that replicate, in the replicate's
-    own shade; grey means it was not. The empty cells are the pocketome's
-    disagreement, in full.
-    """
+    own shade; grey means it was not. The empty cells are the pocketome's disagreement."""
     pockets_df = state_tables[state]["pockets"]
     shades = REPLICATE_SHADES[state]
     projects, experiments = experiment_columns(pockets_df)
@@ -381,14 +353,11 @@ def draw_presence_matrix(axes, state_tables, state, show_row_labels):
         spine.set_visible(False)
 
 
-# --------------------------------------------------------------------------- panel E
+# Panel E
 def draw_jaccard_heatmap(axes, state_tables, state, colourbar_axes):
-    """
-    Every experiment against every other. The three-by-three blocks on the diagonal
-    are replicates of one PDB; everything else is a different receptor. The blocks
-    standing out from the background is the reliability claim in one picture. Each
-    state gets its own colour bar because each is drawn in its own hue.
-    """
+    """Every experiment against every other. The three-by-three blocks on the diagonal
+    are replicates of one PDB; everything else is a different receptor. Each
+    state gets its own colour bar because each is drawn in its own hue."""
     pockets_df = state_tables[state]["pockets"]
     global_id_sets = state_tables[state]["global_id_sets"]
     experiments = sorted(global_id_sets)
@@ -427,13 +396,10 @@ def draw_jaccard_heatmap(axes, state_tables, state, colourbar_axes):
     colourbar.outline.set_visible(False)
 
 
-# --------------------------------------------------------------------------- panel F
+# Panel F
 def draw_rarefaction_panel(axes, state_tables, state):
-    """
-    Distinct global IDs recovered from one, two and three replicates, averaged over
-    every subset of that size. A flattening curve says three replicates have
-    essentially saturated the pocketome.
-    """
+    """Distinct global IDs recovered from one, two and three replicates, averaged over
+    every subset of that size. A flattening curve says three replicates have essentially saturated the pocketome"""
     rarefaction_df = state_tables[state]["rarefaction"]
     shades = REPLICATE_SHADES[state]
     for project in sorted(rarefaction_df["project"].unique()):
@@ -459,15 +425,12 @@ def draw_rarefaction_panel(axes, state_tables, state):
     apply_axes_style(axes)
 
 
-# --------------------------------------------------------------------------- panel G
+# Panel G
 def draw_spread_panel(axes, state_tables, state, random_generator):
-    """
-    Silhouette of every local pocket, split by whether its global ID carries the
+    """Silhouette of every local pocket, split by whether its global ID carries the
     orthosteric site. The split is the point: a silhouette measures compactness
     around a centroid, so a global pocket that is one fragmented cavity scores near
-    zero however real it is, while compact global pockets score high. Without the
-    split the orthosteric cluster just looks like a tail of bad values.
-    """
+    zero however real it is, while compact global pockets score high"""
     spread_df = state_tables[state]["spread"]
     shades = REPLICATE_SHADES[state]
     axes.axvline(0.0, color=NEUTRAL_GREY, linewidth=0.6, zorder=1)
@@ -499,16 +462,13 @@ def draw_spread_panel(axes, state_tables, state, random_generator):
     apply_axes_style(axes)
 
 
-# --------------------------------------------------------------------------- panel H
+# Panel H
 def draw_sweep_panel(axes, state_tables, state):
-    """
-    Percent of local pockets whose occupancy class differs from the reference
+    """Percent of local pockets whose occupancy class differs from the reference
     setting, over the parameter grid. Each cell also carries the number of global
     IDs that setting produces, because the two move together: a stricter IoU merges
     less, so more and smaller global pockets, so more pockets change class.
-
-    The reference cell is 0 by construction and is outlined rather than shaded.
-    """
+    The reference cell is 0 by construction and is outlined rather than shaded"""
     sweep_df = state_tables[state]["sweep"]
     if sweep_df.empty:
         axes.axis("off")
@@ -562,14 +522,11 @@ def draw_sweep_panel(axes, state_tables, state):
         spine.set_visible(False)
 
 
-# --------------------------------------------------------------------------- legend
+# Legend
 def draw_swatch_block(axes, left_x, column_header_rows):
-    """
-    One shade ramp per state, three columns, with both meanings of the lightness
+    """One shade ramp per state, three columns, with both meanings of the lightness
     stacked above the columns: occupancy class for B on top, replicate number for
-    A and C below. One block, because it is one ramp.
-    Returns the x coordinate just past the block.
-    """
+    A and C below. One block, because it is one ramp. Returns the x coordinate just past the block"""
     swatch_width, swatch_height, gap = 0.019, 0.30, 0.004
     for header_row_index, header_row in enumerate(column_header_rows):
         header_y = 1.34 - header_row_index * 0.27
@@ -588,20 +545,14 @@ def draw_swatch_block(axes, left_x, column_header_rows):
 
 
 def draw_shared_legend(axes):
-    """
-    One legend strip for the whole row rather than three axes-level ones, which
+    """One legend strip for the whole row rather than three axes-level ones, which
     would each reserve horizontal space and blow the inter-panel gaps open.
-
     Lightness is one ramp with two readings, so it gets one block with two header
-    rows: how many replicates hold a global ID (B) over which replicate a mark
-    belongs to (A, C).
-    """
+    rows: how many replicates hold a global ID (B) over which replicate a mark belongs to (A, C)"""
     axes.set_xlim(0, 1)
     axes.set_ylim(0, 1)
     axes.axis("off")
-
     draw_swatch_block(axes, 0.055, [["1/3", "2/3", "3/3"], ["r1", "r2", "r3"]])
-
     marker_handles = [
         Line2D([], [], marker="o", linestyle="none", markersize=3.6,
                markerfacecolor=NEUTRAL_GREY, markeredgecolor=NEUTRAL_DARK,
@@ -620,13 +571,11 @@ def draw_shared_legend(axes):
                 handletextpad=0.4, labelspacing=0.45, columnspacing=1.0, borderpad=0.0)
 
 
-# --------------------------------------------------------------------------- panel D
+# Panel D
 def find_render_image():
     """The Blender render for panel D, looked for in the usual places.
-
     Returns None rather than raising, so the figure still builds (with panel D
-    blank, as before) if the render has not been exported yet.
-    """
+    blank) if the render has not been exported yet"""
     if not RENDER_PANEL_IMAGE:
         return None
     if os.path.isabs(RENDER_PANEL_IMAGE) and os.path.isfile(RENDER_PANEL_IMAGE):
@@ -639,12 +588,7 @@ def find_render_image():
 
 
 def draw_render_panel(axes, image_path):
-    """The render, filling the reserved row, with no frame and no resampling blur.
-
-    interpolation is left on the default antialiased resample: the render is far
-    higher resolution than the printed panel, so downsampling it without
-    antialiasing would alias the thin envelope outlines into dashes.
-    """
+    """The render, filling the reserved row, with no frame and no resampling blur"""
     axes.axis("off")
     if image_path is None:
         return None
@@ -657,7 +601,7 @@ def draw_render_panel(axes, image_path):
     return image.shape[1] / image.shape[0]
 
 
-# --------------------------------------------------------------------------- assembly
+# Assembly
 def save_figure(figure, figure_name):
     os.makedirs(SAVING_LOC, exist_ok=True)
     saved_paths = []
@@ -717,15 +661,7 @@ def compose_main_figure(state_tables, figure_height, render_height_ratio):
 
 
 def build_main_figure(state_tables):
-    """A, B, C side by side, a legend strip under them, then the render as panel D.
-
-    The render is far wider than it is tall, so a hand-set row height would leave a
-    white band down both sides of it. Instead the row height and the figure height
-    are solved for the image's own aspect ratio: measure what the reserved axes
-    actually came out as, ask for the height that would make the render span the
-    full column width, and re-lay out. It converges in a few passes, and each pass
-    is only a layout - none of the panel data is recomputed.
-    """
+    """A, B, C side by side, a legend strip under them, then the render as panel D"""
     figure_height = MAIN_FIGURE_HEIGHT
     render_height_ratio = RENDER_PANEL_HEIGHT_RATIO
     figure, panel_axes, render_axes, image_aspect = compose_main_figure(

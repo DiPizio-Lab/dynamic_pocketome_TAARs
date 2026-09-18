@@ -1,7 +1,5 @@
-"""
-The 'compare everything' panel for the combined apo+holo run. Built ONLY from
-pocket_comparison_table.csv (no 60GB file). Uses output of pipeline/global_id_and_comparison.py to generate a heatmap.
-
+"""The 'compare everything' panel for the combined apo+holo run. Built ONLY from
+pocket_comparison_table.csv. Uses output of pipeline/global_id_and_comparison.py to generate a heatmap.
     rows    = Global ID (ubiquitous pockets on top; orthosteric flagged if the
               is_binding_site column is populated)
     columns = every experiment, ordered gene -> state -> rep, so:
@@ -20,11 +18,10 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, REPO_ROOT)  # repo root, for `config` and `scripts`
-sys.path.insert(0, os.path.join(REPO_ROOT, "pipeline"))  # for `pocket_io`
+sys.path.insert(0, REPO_ROOT)
 from config import META_ANALYSIS_ROOT
 from scripts import gene_selections
-import pocket_io
+from pipeline import pocket_io
 
 STATE_ORDER = {"apo": 0, "holo": 1}
 
@@ -62,7 +59,7 @@ def build(pock_df):
     vol = vol.reindex(columns=col_order)
     cnt = cnt.reindex(columns=col_order)
 
-    # rows: numeric Global ID order (orthosteric still marked with a star)
+    # rows: numeric Global ID order (orthosteric marked with a star)
     ortho = pd.Series(False, index=vol.index)
     if "is_orthosteric" in pock_df.columns and (pock_df["is_orthosteric"] == True).any():
         ortho = pock_df.groupby("Global ID")["is_orthosteric"].apply(lambda s: (s == True).any())
@@ -82,24 +79,20 @@ def plot(vol, cnt, meta, ortho, out_png, out_pdf):
     fig, ax = plt.subplots(figsize=(0.42 * ncol + 3.2, 0.42 * nrow + 2.4))
     im = ax.imshow(data, cmap=cmap, aspect="auto")
 
-    # fusion dots
     for i in range(nrow):
         for j in range(ncol):
             if cnt.values[i, j] is not None and not np.isnan(cnt.values[i, j]) and cnt.values[i, j] >= 2:
                 ax.plot(j, i, marker="o", ms=3.2, mfc="white", mec="#222222", mew=0.4)
 
-    # y ticks: global id, orthosteric in bold
     ax.set_yticks(range(nrow))
     ax.set_yticklabels([f"{'★ ' if o else ''}{gid}" for gid, o in zip(vol.index, ortho)],
                        fontsize=8, fontweight="normal")
     ax.set_ylabel("Global ID", fontsize=10)
 
-    # x ticks: rep number at the base
     ax.set_xticks(range(ncol))
     ax.set_xticklabels(meta["rep"].tolist(), fontsize=7)
     ax.tick_params(length=0)
 
-    # block separators + gene/state labels
     edges_state, edges_gene = [], []
     prev_gene = prev_state = None
     gene_spans = {}
@@ -109,14 +102,12 @@ def plot(vol, cnt, meta, ortho, out_png, out_pdf):
         if (r["gene"], r["state"]) != (prev_gene, prev_state) and j != 0:
             edges_state.append(j - 0.5)
         gene_spans.setdefault(r["gene"], []).append(j)
-        # state label centred over each state block
         prev_gene, prev_state = r["gene"], r["state"]
     for x in edges_state:
         ax.axvline(x, color="white", lw=1.2)
     for x in edges_gene:
         ax.axvline(x, color="#222222", lw=1.6)
 
-    # state labels (apo/holo) just above the grid
     prev = None
     for j, (_, r) in enumerate(meta.iterrows()):
         key = (r["gene"], r["state"])
@@ -126,7 +117,7 @@ def plot(vol, cnt, meta, ortho, out_png, out_pdf):
             ax.text(np.mean(js), -0.95, r["state"], ha="center", va="bottom",
                     fontsize=7.5, color="#444444")
             prev = key
-    # gene labels above that
+
     for g, js in gene_spans.items():
         ax.text(np.mean(js), -2.35, g, ha="center", va="bottom", fontsize=10, fontweight="bold")
 
@@ -136,7 +127,6 @@ def plot(vol, cnt, meta, ortho, out_png, out_pdf):
 
     cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
     cbar.set_label("median pocket volume (Å³)", fontsize=9)
-    # legend proxies
     absent = plt.Rectangle((0, 0), 1, 1, fc="#EFEFEF")
     fus = plt.Line2D([0], [0], marker="o", ls="", mfc="white", mec="#222222", ms=6)
     ax.legend([absent, fus], ["pocket absent", "≥2 locals fused"],

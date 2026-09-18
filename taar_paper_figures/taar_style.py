@@ -1,5 +1,5 @@
 """shared style, palette, gene map and Delta-bar helpers for the paper figures.
-single source of truth for colours + row order; imported by fig1..fig3 and paper_plots."""
+single source for colours + row order"""
 import ast
 import os
 from pathlib import Path
@@ -9,20 +9,15 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import transforms
 
-# this package is expected to live INSIDE the analysis directory, e.g.
-#     apo_holo_analysis/taar_paper_figures/taar_style.py
-# so ROOT is simply its parent. Override with the TAAR_ROOT environment variable, or
-# hardcode it here, if you move the package somewhere else.
 PACKAGE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("TAAR_ROOT", PACKAGE_DIR.parent))
 
 GENE_DICT_PATH = os.path.join(ROOT, "reference_data", "hard_coded_gene_dict.txt")
 FIG_DIR = os.path.join(ROOT, "output", "meta_analysis", "paper_figures")
 
-# ---------------------------------------------------------------- palette
+# Palette
 STATE_COLORS = {"apo": "#D9B98B", "holo": "#9B5560"}      # sand / dusty burgundy
-# holo was slate #3D405B until it was judged too close to the dark end of viridis
-# (dE 29 to viridis 0.40); burgundy sits dE 50 from its nearest viridis anchor
+
 GENE_COLORS = {"hTAAR1": "#000000", "mTAAR1": "#000000",
                "mTAAR7f": "#000000", "mTAAR9": "#000000"}  # black: gene names are labels, not data
 GENE_ORDER = ["hTAAR1", "mTAAR1", "mTAAR7f", "mTAAR9"]
@@ -34,25 +29,24 @@ CAT_COLORS = {c: mpl.colors.to_hex(plt.get_cmap("viridis")(p))
               for c, p in zip(CATEGORIES, CAT_POS)}
 THRESH = [250, 500, 750]                                  # category cut points (A^3)
 
-# ---------------------------------------------------------------- style
+# Style
 def apply_style():
-    """ACS/JCIM figure defaults: Arial/Helvetica, >= 8 pt lettering, 0.5 pt lines"""
+    """Arial/Helvetica, >= 8 pt lettering, 0.5 pt lines"""
     plt.rcParams.update({
         "font.family": "sans-serif",
         "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
         "font.size": 8,
         "axes.titlesize": 10,
         "axes.linewidth": 0.5,
-        "axes.titlepad": 3,
-    })
+        "axes.titlepad": 3})
 
 def load_gene_map():
-    """reads the hard coded PDBID -> short gene name dict from file"""
+    """reads the hard coded PDBID --> short gene name dict from file"""
     text = Path(GENE_DICT_PATH).read_text()
     return ast.literal_eval(text.split("=", 1)[1].strip())
 
 def order_pdbids(pdbids, gene_map):
-    """PDB IDs ordered by gene (GENE_ORDER) then PDB ID - same row order as figure 1"""
+    """PDB IDs ordered by gene (GENE_ORDER) then PDB ID - same row order for all figures"""
     return sorted(set(pdbids), key=lambda pdb: (GENE_ORDER.index(gene_map[pdb]), pdb))
 
 def contiguous_blocks(labels):
@@ -83,7 +77,7 @@ def state_row_labels(ax, n_row, offset, pad_major=22, fontsize=5.5):
     minor, labels = [], []
     for i in range(n_row):
         minor += [i - offset, i + offset]
-        labels += ["h", "a"]                     # -offset drawn above (y inverted): holo on top
+        labels += ["h", "a"]                     # offset drawn above (y inverted): holo on top
     ax.set_yticks(minor, minor=True)
     ax.set_yticklabels(labels, minor=True, fontsize=fontsize)
     for tick, lab in zip(ax.yaxis.get_minorticklabels(), labels):
@@ -103,7 +97,7 @@ def diff_barh(ax, values, genes, xmax, direction_labels=True):
     ax.set_ylim(len(values) - 0.5, -0.5)
     ax.set_xticks([-xmax, 0, xmax])
     ax.tick_params(axis="both", length=0)
-    ax.tick_params(axis="y", which="both", labelleft=False)   # rows are labelled once, on panel A
+    ax.tick_params(axis="y", which="both", labelleft=False)   # rows are labelled once on panel A
     for side in ("top", "right", "left", "bottom"):
         ax.spines[side].set_visible(False)
     gene_dividers(ax, genes)
@@ -115,7 +109,6 @@ def diff_barh(ax, values, genes, xmax, direction_labels=True):
 
 def panel_letters(fig, entries, dy_pt=10, dx_pt=14, row_tol=0.03, align_columns=True):
     """place panel letters at a consistent offset from each panel's top-left corner.
-
     Letters are grouped into rows by the top edge of their axes; every letter in a row
     shares one y (so A/B line up, C/D line up). With align_columns=True, panels that
     start at nearly the same x also share one letter x, so A and C sit in a column even
@@ -131,7 +124,6 @@ def panel_letters(fig, entries, dy_pt=10, dx_pt=14, row_tol=0.03, align_columns=
 
     positions = [(letter, ax, ax.get_position()) for letter, ax in entries]
 
-    # group into rows by top edge
     rows = []
     for item in sorted(positions, key=lambda e: -e[2].y1):
         for row in rows:
