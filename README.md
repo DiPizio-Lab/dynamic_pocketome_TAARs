@@ -6,6 +6,9 @@
 
 ![Graphical abstract](graphical_abstract_20260908.png)
 
+Link to preprint / How to cite: https://www.biorxiv.org/content/10.64898/2026.09.14.751399v2; 
+Author List: Clarissa Rienaecker; Alessandro Nicoli; Jana Selent; Antonella Di Pizio
+
 Pipeline for comparative pocket (pocketome) analysis of TAAR GPCR structures in
 apo and holo states, extended with a global pocket ID scheme that makes
 pockets comparable across MD replicates and across the apo/holo split.
